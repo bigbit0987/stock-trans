@@ -171,13 +171,8 @@ def run_scan():
     logger.info(print_df.to_string(index=False))
     logger.info("=" * 60)
     
-    # 手机推送提醒
-    try:
-        from src.notifier import notify_stock_signals
-        notify_stock_signals(results_df)
-        logger.info("\n📱 信号已推送到手机")
-    except Exception as e:
-        logger.error(f"   ⚠️ 推送失败: {e}")
+    # 返回结果供调用方(如 main.py)处理通知逻辑
+    return signals
 
 
 if __name__ == "__main__":

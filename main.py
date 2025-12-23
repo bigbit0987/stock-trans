@@ -16,7 +16,15 @@ from src.utils import logger
 def cmd_scan(args):
     """执行尾盘选股"""
     from src.tasks.scanner import run_scan
-    run_scan()
+    signals = run_scan()
+    
+    if args.push and signals:
+        try:
+            from src.notifier import notify_stock_signals
+            notify_stock_signals(signals)
+            logger.info("\n📱 选股结果已推送到手机")
+        except Exception as e:
+            logger.error(f"\n⚠️ 推送失败: {e}")
 
 
 def cmd_check(args):
@@ -128,7 +136,8 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
     
     # 选股
-    subparsers.add_parser("scan", help="🔍 尾盘选股 (14:35-14:50)")
+    scan_parser = subparsers.add_parser("scan", help="🔍 尾盘选股 (14:35-14:50)")
+    scan_parser.add_argument("--push", action="store_true", help="是否推送通知")
     
     # 巡检
     check_parser = subparsers.add_parser("check", help="📋 持仓巡检")
