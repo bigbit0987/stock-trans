@@ -153,6 +153,16 @@ def run_scan():
             code = future_to_stock[future]
             try:
                 hist = future.result()
+                
+                # ---【防止未来函数】---
+                # 确保 hist 中不包含今天正在交易的 K 线数据
+                if hist is not None and not hist.empty:
+                    today_str = datetime.datetime.now().strftime('%Y-%m-%d')
+                    # 统一日期格式进行对比
+                    hist['日期_str'] = pd.to_datetime(hist['日期']).dt.strftime('%Y-%m-%d')
+                    if hist.iloc[-1]['日期_str'] == today_str:
+                        hist = hist.iloc[:-1] # 切除今天，只保留到昨天的纯净历史数据
+                
                 if hist is not None and len(hist) >= 5:
                     data = stock_data_map[code]
                     
