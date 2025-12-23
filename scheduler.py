@@ -16,30 +16,31 @@ from config import SCHEDULER
 # 任务定义
 TASKS = {
     'update_rps': {
-        'script': 'update_rps.py',
+        'command': ['update'],
         'time': SCHEDULER['update_rps_time'],
         'description': '更新 RPS 数据'
     },
     'scan_1': {
-        'script': 'scan.py',
+        'command': ['scan'],
         'time': SCHEDULER['scan_time_1'],
         'description': '尾盘扫描 (第一次)'
     },
     'scan_2': {
-        'script': 'scan.py',
+        'command': ['scan'],
         'time': SCHEDULER['scan_time_2'],
         'description': '尾盘扫描 (第二次)'
     }
 }
 
 
-def run_script(script: str, desc: str):
-    """运行脚本"""
+def run_task(command_list: list, desc: str):
+    """通过 main.py 运行任务"""
     print(f"\n{'='*60}")
     print(f"⏰ [{datetime.now().strftime('%H:%M:%S')}] {desc}")
     print(f"{'='*60}")
     
-    subprocess.run([sys.executable, os.path.join(PROJECT_ROOT, script)])
+    cmd = [sys.executable, os.path.join(PROJECT_ROOT, 'main.py')] + command_list
+    subprocess.run(cmd)
 
 
 def is_trading_day() -> bool:
@@ -63,7 +64,7 @@ def run_scheduler():
         
         for name, task in TASKS.items():
             schedule.every().day.at(task['time']).do(
-                run_script, task['script'], task['description']
+                run_task, task['command'], task['description']
             )
         
         while True:
@@ -81,7 +82,7 @@ def run_now(task_name: str):
     """立即运行指定任务"""
     if task_name in TASKS:
         task = TASKS[task_name]
-        run_script(task['script'], task['description'])
+        run_task(task['command'], task['description'])
     else:
         print(f"未知任务: {task_name}")
         print("可用任务:", list(TASKS.keys()))

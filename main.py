@@ -1,22 +1,7 @@
 #!/usr/bin/env python
 """
 AlphaHunter - 尾盘低吸量化交易系统
-统一命令行入口
-
-使用方法:
-    python main.py scan              # 尾盘选股
-    python main.py check [--push]    # 持仓巡检
-    python main.py update            # 更新RPS数据
-    python main.py premarket [--push] # 集合竞价预警
-    python main.py dashboard         # 查看交易战绩
-    python main.py backtest          # 策略回测
-    
-    # 持仓管理
-    python main.py add 代码 名称 价格 [数量]
-    python main.py close 代码 [卖出价] [数量] [force]
-    python main.py import [文件路径]
-    python main.py list
-    python main.py history
+统一命令行入口 (Unified Entry Point)
 """
 import argparse
 import sys
@@ -26,67 +11,67 @@ import os
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
+from src.utils import logger
 
 def cmd_scan(args):
     """执行尾盘选股"""
-    from scan import run_scan
+    from src.tasks.scanner import run_scan
     run_scan()
 
 
 def cmd_check(args):
     """执行持仓巡检"""
-    from position import daily_check
+    from src.tasks.portfolio import daily_check
     alerts = daily_check()
     
     if args.push and alerts:
         try:
             from src.notifier import notify_position_alert
             notify_position_alert(alerts)
-            print("\n📱 预警已推送到手机")
+            logger.info("\n📱 预警已推送到手机")
         except Exception as e:
-            print(f"\n⚠️ 推送失败: {e}")
+            logger.error(f"\n⚠️ 推送失败: {e}")
 
 
 def cmd_update(args):
     """更新 RPS 数据"""
-    from update_rps import update_rps_ranking
-    update_rps_ranking()
+    from src.tasks.updater import run_updater
+    run_updater()
 
 
 def cmd_premarket(args):
     """集合竞价预警"""
-    from premarket import check_premarket
+    from src.tasks.premarket import check_premarket
     alerts = check_premarket()
     
     if args.push and alerts:
         try:
             from src.notifier import notify_premarket_alert
             notify_premarket_alert(alerts)
-            print("\n📱 预警已推送到手机")
+            logger.info("\n📱 预警已推送到手机")
         except Exception as e:
-            print(f"\n⚠️ 推送失败: {e}")
+            logger.error(f"\n⚠️ 推送失败: {e}")
 
 
 def cmd_dashboard(args):
     """查看交易战绩"""
+    from src.tasks.dashboard import load_trade_history, print_summary, run_streamlit_app
     if args.web:
-        print("正在启动 Streamlit 界面...")
-        os.system(f"streamlit run dashboard.py")
+        run_streamlit_app()
     else:
-        from dashboard import load_trade_history, print_summary
         df = load_trade_history()
         print_summary(df)
 
 
 def cmd_backtest(args):
     """策略回测"""
-    from backtest import run_backtest
-    run_backtest()
+    from src.tasks.backtester import run_backtester
+    run_backtester()
 
 
 def cmd_add(args):
     """添加持仓"""
-    from position import add_position
+    from src.tasks.portfolio import add_position
     add_position(
         code=args.code,
         name=args.name,
@@ -98,7 +83,7 @@ def cmd_add(args):
 
 def cmd_close(args):
     """平仓"""
-    from position import close_position
+    from src.tasks.portfolio import close_position
     close_position(
         code=args.code,
         sell_price=args.price,
@@ -109,34 +94,21 @@ def cmd_close(args):
 
 def cmd_import(args):
     """导入持仓"""
-    from position import import_from_csv
+    from src.tasks.portfolio import import_from_csv
     import_from_csv(args.file)
 
 
 def cmd_list(args):
     """列出持仓"""
-    from position import list_holdings
+    from src.tasks.portfolio import list_holdings
     list_holdings()
 
 
 def cmd_history(args):
     """查看交易历史"""
-    import pandas as pd
-    history_file = os.path.join(PROJECT_ROOT, "data", "trade_history.csv")
-    if os.path.exists(history_file):
-        df = pd.read_csv(history_file)
-        print("\n📊 交易历史:")
-        print("-" * 80)
-        print(df.to_string(index=False))
-        print("-" * 80)
-        if '盈亏%' in df.columns:
-            df['盈亏%'] = df['盈亏%'].astype(float)
-            wins = len(df[df['盈亏%'] > 0])
-            total = len(df)
-            avg_pnl = df['盈亏%'].mean()
-            print(f"\n📈 统计: 共{total}笔交易, 盈利{wins}笔, 胜率{wins/total*100:.1f}%, 平均收益{avg_pnl:.2f}%")
-    else:
-        print("📭 暂无交易历史")
+    from src.tasks.dashboard import load_trade_history, print_summary
+    df = load_trade_history()
+    print_summary(df)
 
 
 def main():
@@ -155,60 +127,55 @@ def main():
     
     subparsers = parser.add_subparsers(dest="command", help="可用命令")
     
-    # scan 命令
+    # 选股
     subparsers.add_parser("scan", help="🔍 尾盘选股 (14:35-14:50)")
     
-    # check 命令
+    # 巡检
     check_parser = subparsers.add_parser("check", help="📋 持仓巡检")
-    check_parser.add_argument("--push", action="store_true", help="推送预警到手机")
+    check_parser.add_argument("--push", action="store_true", help="是否推送通知")
     
-    # update 命令
+    # 更新 RPS
     subparsers.add_parser("update", help="📊 更新 RPS 数据")
     
-    # premarket 命令
-    premarket_parser = subparsers.add_parser("premarket", help="📢 集合竞价预警 (9:20-9:25)")
-    premarket_parser.add_argument("--push", action="store_true", help="推送预警到手机")
+    # 集合竞价
+    pre_parser = subparsers.add_parser("premarket", help="📢 集合竞价预警 (9:20-9:25)")
+    pre_parser.add_argument("--push", action="store_true", help="是否推送通知")
     
-    # dashboard 命令
-    dashboard_parser = subparsers.add_parser("dashboard", help="📈 查看交易战绩")
-    dashboard_parser.add_argument("--web", action="store_true", help="启动 Web 界面")
+    # 战绩
+    dash_parser = subparsers.add_parser("dashboard", help="📈 交易战绩总结")
+    dash_parser.add_argument("--web", action="store_true", help="启动 Web 界面")
     
-    # backtest 命令
-    subparsers.add_parser("backtest", help="📉 策略回测")
+    # 回测
+    subparsers.add_parser("backtest", help="📉 策略回测验证")
     
-    # add 命令
-    add_parser = subparsers.add_parser("add", help="➕ 添加持仓")
+    # 管理命令
+    add_parser = subparsers.add_parser("add", help="➕ 新增持仓记录")
     add_parser.add_argument("code", help="股票代码")
     add_parser.add_argument("name", help="股票名称")
     add_parser.add_argument("price", type=float, help="买入价格")
-    add_parser.add_argument("quantity", type=int, nargs="?", help="买入数量")
-    add_parser.add_argument("--strategy", choices=["RPS_CORE", "POTENTIAL", "STABLE"], help="策略类型")
-    
-    # close 命令
-    close_parser = subparsers.add_parser("close", help="💰 平仓卖出")
+    add_parser.add_argument("quantity", type=int, nargs="?", help="数量")
+    add_parser.add_argument("--strategy", choices=["RPS_CORE", "POTENTIAL", "STABLE"], help="策略")
+
+    close_parser = subparsers.add_parser("close", help="💰 卖出结账")
     close_parser.add_argument("code", help="股票代码")
-    close_parser.add_argument("price", type=float, nargs="?", help="卖出价格")
-    close_parser.add_argument("quantity", type=int, nargs="?", help="卖出数量")
-    close_parser.add_argument("--force", action="store_true", help="强制卖出(跳过T+1)")
+    close_parser.add_argument("price", type=float, nargs="?", help="成交价")
+    close_parser.add_argument("quantity", type=int, nargs="?", help="数量")
+    close_parser.add_argument("--force", action="store_true", help="强制忽略 T+1 限制")
+
+    subparsers.add_parser("list", help="📋 查看当前所有持仓")
+    subparsers.add_parser("history", help="📜 查看完整交易历史")
     
-    # import 命令
-    import_parser = subparsers.add_parser("import", help="📥 从CSV导入持仓")
-    import_parser.add_argument("file", nargs="?", help="CSV文件路径")
-    
-    # list 命令
-    subparsers.add_parser("list", help="📋 列出所有持仓")
-    
-    # history 命令
-    subparsers.add_parser("history", help="📜 查看交易历史")
-    
+    imp_parser = subparsers.add_parser("import", help="📥 从选股结果导入持仓")
+    imp_parser.add_argument("file", nargs="?", help="指定的 CSV 路径")
+
     args = parser.parse_args()
     
-    if args.command is None:
+    if not args.command:
         parser.print_help()
         return
-    
-    # 命令分发
-    commands = {
+
+    # 命令路由执行
+    cmd_map = {
         "scan": cmd_scan,
         "check": cmd_check,
         "update": cmd_update,
@@ -222,8 +189,8 @@ def main():
         "history": cmd_history,
     }
     
-    if args.command in commands:
-        commands[args.command](args)
+    if args.command in cmd_map:
+        cmd_map[args.command](args)
     else:
         parser.print_help()
 

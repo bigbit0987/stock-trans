@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-持仓管理模块 (Position Manager)
+持仓管理任务 (Portfolio Manager)
 功能：
 1. 记录持仓
 2. 每日巡检（监控止损位）
@@ -12,11 +12,13 @@ import json
 import datetime
 import pandas as pd
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+# 添加项目根目录到路径
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
 import akshare as ak
 from config import RESULTS_DIR
+from src.utils import logger
 
 # 持仓文件路径
 HOLDINGS_FILE = os.path.join(PROJECT_ROOT, "data", "holdings.json")
@@ -134,8 +136,8 @@ def add_position(
         # 买入日期不更新，保留最早日期
         
         save_holdings(holdings)
-        print(f"🔄 已合并持仓: {code} {name}")
-        print(f"   新成本: {new_price:.3f} | 数量: {total_qty}")
+        logger.info(f"🔄 已合并持仓: {code} {name}")
+        logger.info(f"   新成本: {new_price:.3f} | 数量: {total_qty}")
     else:
         # 新开仓
         holdings[code] = {
@@ -147,7 +149,7 @@ def add_position(
             "note": note
         }
         save_holdings(holdings)
-        print(f"✅ 已添加持仓: {code} {name} @ {buy_price}")
+        logger.info(f"✅ 已添加持仓: {code} {name} @ {buy_price}")
 
 
 def remove_position(code: str):
@@ -157,9 +159,9 @@ def remove_position(code: str):
     if code in holdings:
         info = holdings.pop(code)
         save_holdings(holdings)
-        print(f"✅ 已移除持仓: {code} {info['name']}")
+        logger.info(f"✅ 已移除持仓: {code} {info['name']}")
     else:
-        print(f"⚠️ 未找到持仓: {code}")
+        logger.warning(f"⚠️ 未找到持仓: {code}")
 
 
 def get_latest_results_file() -> str:
@@ -195,7 +197,7 @@ def close_position(code: str, sell_price: float = None, sell_quantity: int = 0, 
     holdings = load_holdings()
     
     if code not in holdings:
-        print(f"⚠️ 未找到持仓: {code}")
+        logger.warning(f"⚠️ 未找到持仓: {code}")
         return
     
     info = holdings[code]
@@ -206,9 +208,9 @@ def close_position(code: str, sell_price: float = None, sell_quantity: int = 0, 
     today_str = datetime.date.today().strftime("%Y-%m-%d")
     
     if buy_date_str == today_str and not force:
-        print(f"❌ 拒绝卖出: {code} {info['name']}")
-        print(f"   该股票是今日({today_str})买入的持仓 (A股T+1限制)")
-        print(f"   如果确实需要卖出(如做T)，请使用: --close {code},{sell_price or '价格'},数量,force")
+        logger.error(f"❌ 拒绝卖出: {code} {info['name']}")
+        logger.info(f"   该股票是今日({today_str})买入的持仓 (A股T+1限制)")
+        logger.info(f"   如果确实需要卖出(如做T)，请使用: --close {code},{sell_price or '价格'},数量,force")
         return
     # -----------------------
     
@@ -220,10 +222,10 @@ def close_position(code: str, sell_price: float = None, sell_quantity: int = 0, 
             if not stock.empty:
                 sell_price = stock.iloc[0]['最新价']
             else:
-                print(f"❌ 无法获取 {code} 当前价格，请手动指定卖出价")
+                logger.error(f"❌ 无法获取 {code} 当前价格，请手动指定卖出价")
                 return
         except:
-            print(f"❌ 无法获取 {code} 当前价格，请手动指定卖出价")
+            logger.error(f"❌ 无法获取 {code} 当前价格，请手动指定卖出价")
             return
     
     # 判断是全部卖出还是部分卖出
@@ -277,15 +279,15 @@ def close_position(code: str, sell_price: float = None, sell_quantity: int = 0, 
     
     # 显示结果
     if pnl >= 0:
-        print(f"{action}: {code} {info['name']}")
-        print(f"   买入: {buy_price} → 卖出: {sell_price}")
-        print(f"   盈利: {pnl:+.2f}% (持有{days_held}天)")
+        logger.info(f"{action}: {code} {info['name']}")
+        logger.info(f"   买入: {buy_price} → 卖出: {sell_price}")
+        logger.info(f"   盈利: {pnl:+.2f}% (持有{days_held}天)")
     else:
-        print(f"📉 {action}: {code} {info['name']}")
-        print(f"   买入: {buy_price} → 卖出: {sell_price}")
-        print(f"   亏损: {pnl:.2f}% (持有{days_held}天)")
+        logger.info(f"📉 {action}: {code} {info['name']}")
+        logger.info(f"   买入: {buy_price} → 卖出: {sell_price}")
+        logger.info(f"   亏损: {pnl:.2f}% (持有{days_held}天)")
     
-    print(f"   📝 已归档到: data/trade_history.csv")
+    logger.info(f"   📝 已归档到: data/trade_history.csv")
 
 
 def get_stock_ma5(code: str) -> tuple:
@@ -327,7 +329,7 @@ def get_stock_ma5(code: str) -> tuple:
         return current_price, ma5, is_below_ma5
         
     except Exception as e:
-        print(f"   获取 {code} 数据出错: {e}")
+        logger.error(f"   获取 {code} 数据出错: {e}")
         return None, None, None
 
 
@@ -336,18 +338,18 @@ def daily_check():
     每日持仓巡检
     检查是否跌破止损位
     """
-    print("=" * 60)
-    print("📋 持仓巡检")
-    print(f"   时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 60)
+    logger.info("=" * 60)
+    logger.info("📋 持仓巡检")
+    logger.info(f"   时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info("=" * 60)
     
     holdings = load_holdings()
     
     if not holdings:
-        print("\n📭 当前无持仓")
-        return
+        logger.info("\n📭 当前无持仓")
+        return []
     
-    print(f"\n当前持仓: {len(holdings)} 只\n")
+    logger.info(f"\n当前持仓: {len(holdings)} 只\n")
     
     alerts = []
     
@@ -361,7 +363,7 @@ def daily_check():
         current, ma5, below_ma5 = get_stock_ma5(code)
         
         if current is None:
-            print(f"  ⚠️ {code} {name}: 数据获取失败")
+            logger.warning(f"  ⚠️ {code} {name}: 数据获取失败")
             continue
         
         # 计算盈亏
@@ -397,25 +399,25 @@ def daily_check():
             status = "🟢"
             action = "可考虑止盈"
         
-        print(f"  {status} {code} {name}")
-        print(f"     买入: {buy_price} ({buy_date}, 持有{days_held}天)")
-        ma5_str = f"{ma5:.3f}" if ma5 else "N/A"  # 保留3位小数，更精确判断粘合度
-        print(f"     现价: {current:.2f} | MA5: {ma5_str} | 盈亏: {pnl_str}")
+        logger.info(f"  {status} {code} {name}")
+        logger.info(f"     买入: {buy_price} ({buy_date}, 持有{days_held}天)")
+        ma5_str = f"{ma5:.3f}" if ma5 else "N/A"
+        logger.info(f"     现价: {current:.2f} | MA5: {ma5_str} | 盈亏: {pnl_str}")
         if action:
-            print(f"     👉 {action}")
-        print()
+            logger.info(f"     👉 {action}")
+        logger.info("")
     
     # 汇总警报
     if alerts:
-        print("=" * 60)
-        print("🚨 需要立即关注的持仓:")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("🚨 需要立即关注的持仓:")
+        logger.info("=" * 60)
         for alert in alerts:
-            print(f"  ❗ {alert['code']} {alert['name']}: {alert['action']}")
-            print(f"     现价: {alert['current']:.2f} < MA5: {alert['ma5']:.2f}")
-        print("\n💡 建议: RPS_CORE 策略股票跌破5日线应止损出局！")
+            logger.info(f"  ❗ {alert['code']} {alert['name']}: {alert['action']}")
+            logger.info(f"     现价: {alert['current']:.2f} < MA5: {alert['ma5']:.2f}")
+        logger.info("\n💡 建议: RPS_CORE 策略股票跌破5日线应止损出局！")
     
-    return alerts  # 返回警报列表，用于推送
+    return alerts
 
 
 def list_holdings():
@@ -423,49 +425,42 @@ def list_holdings():
     holdings = load_holdings()
     
     if not holdings:
-        print("📭 当前无持仓")
+        logger.info("📭 当前无持仓")
         return
     
-    print("\n📋 当前持仓:")
-    print("-" * 60)
-    print(f"{'代码':<10} {'名称':<10} {'买入价':>8} {'日期':<12} {'策略':<12}")
-    print("-" * 60)
+    logger.info("\n📋 当前持仓:")
+    logger.info("-" * 60)
+    logger.info(f"{'代码':<10} {'名称':<10} {'买入价':>8} {'日期':<12} {'策略':<12}")
+    logger.info("-" * 60)
     
     for code, info in holdings.items():
-        print(f"{code:<10} {info['name']:<10} {info['buy_price']:>8.2f} {info['buy_date']:<12} {info.get('strategy', 'STABLE'):<12}")
+        logger.info(f"{code:<10} {info['name']:<10} {info['buy_price']:>8.2f} {info['buy_date']:<12} {info.get('strategy', 'STABLE'):<12}")
 
 
 def import_from_csv(csv_path: str = None, strategy: str = "STABLE"):
     """
     从选股结果 CSV 导入持仓
-    
-    Args:
-        csv_path: CSV 文件路径，默认自动查找最新的选股结果
-        strategy: 默认策略类型
     """
     if csv_path is None:
-        # 使用智能查找，自动定位最新的选股结果文件
-        # 解决周一导入周五文件、凌晨导入等问题
         csv_path = get_latest_results_file()
         if csv_path:
-            print(f"📄 自动定位到最新文件: {os.path.basename(csv_path)}")
+            logger.info(f"📄 自动定位到最新文件: {os.path.basename(csv_path)}")
     
     if not csv_path or not os.path.exists(csv_path):
-        print(f"❌ 未找到选股结果文件")
-        print(f"   请先运行 scan.py 生成选股结果")
+        logger.error(f"❌ 未找到选股结果文件")
+        logger.info(f"   请先运行 scan.py 生成选股结果")
         return
     
     df = pd.read_csv(csv_path)
     
-    print(f"\n📥 从 {os.path.basename(csv_path)} 导入持仓:")
-    print("-" * 50)
+    logger.info(f"\n📥 从 {os.path.basename(csv_path)} 导入持仓:")
+    logger.info("-" * 50)
     
     for _, row in df.iterrows():
         code = str(row['代码']).zfill(6)
         name = row['名称']
         price = row['现价']
         
-        # 根据分类设定策略
         category = row.get('分类', '')
         if '趋势核心' in category:
             strat = 'RPS_CORE'
@@ -474,81 +469,12 @@ def import_from_csv(csv_path: str = None, strategy: str = "STABLE"):
         else:
             strat = 'STABLE'
         
-        print(f"  {code} {name} @ {price} [{strat}]")
-        
+        logger.info(f"  {code} {name} @ {price} [{strat}]")
         add_position(code, name, price, strategy=strat)
     
-    print(f"\n✅ 已导入 {len(df)} 只股票")
+    logger.info(f"\n✅ 已导入 {len(df)} 只股票")
 
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='持仓管理')
-    parser.add_argument('--check', action='store_true', help='每日巡检')
-    parser.add_argument('--push', action='store_true', help='巡检时推送预警到手机')
-    parser.add_argument('--list', action='store_true', help='列出持仓')
-    parser.add_argument('--add', type=str, help='添加持仓: 代码,名称,买入价 (例: 600000,浦发银行,10.5)')
-    parser.add_argument('--remove', type=str, help='移除持仓（不归档）: 代码')
-    parser.add_argument('--close', type=str, help='平仓（归档盈亏）: 代码[,卖出价] (例: 600000 或 600000,11.5)')
-    parser.add_argument('--import-csv', type=str, nargs='?', const='today', help='从 CSV 导入持仓')
-    parser.add_argument('--history', action='store_true', help='查看交易历史')
-    
-    args = parser.parse_args()
-    
-    if args.check:
-        alerts = daily_check()
-        # 如果有预警且指定了推送
-        if args.push and alerts:
-            try:
-                from src.notifier import notify_position_alert
-                notify_position_alert(alerts)
-                print("\n📱 预警已推送到手机")
-            except Exception as e:
-                print(f"\n⚠️ 推送失败: {e}")
-                print("   请检查 config/settings.py 中的 NOTIFY 配置")
-    elif args.list:
-        list_holdings()
-    elif args.add:
-        parts = args.add.split(',')
-        if len(parts) >= 3:
-            add_position(parts[0], parts[1], float(parts[2]))
-        else:
-            print("格式错误，应为: 代码,名称,买入价")
-    elif args.remove:
-        remove_position(args.remove)
-    elif args.close:
-        # 支持格式: 代码 或 代码,卖出价 或 代码,卖出价,数量 或 代码,卖出价,数量,force
-        parts = args.close.split(',')
-        code = parts[0]
-        sell_price = float(parts[1]) if len(parts) > 1 and parts[1] else None
-        sell_quantity = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
-        force = len(parts) > 3 and parts[3].lower() == 'force'
-        close_position(code, sell_price, sell_quantity, force)
-    elif args.import_csv:
-        if args.import_csv == 'today':
-            import_from_csv()
-        else:
-            import_from_csv(args.import_csv)
-    elif args.history:
-        # 查看交易历史
-        history_file = os.path.join(PROJECT_ROOT, "data", "trade_history.csv")
-        if os.path.exists(history_file):
-            df = pd.read_csv(history_file)
-            print("\n📊 交易历史:")
-            print("-" * 80)
-            print(df.to_string(index=False))
-            print("-" * 80)
-            # 统计
-            if '盈亏%' in df.columns:
-                df['盈亏%'] = df['盈亏%'].astype(float)
-                wins = len(df[df['盈亏%'] > 0])
-                total = len(df)
-                avg_pnl = df['盈亏%'].mean()
-                print(f"\n📈 统计: 共{total}笔交易, 盈利{wins}笔, 胜率{wins/total*100:.1f}%, 平均收益{avg_pnl:.2f}%")
-        else:
-            print("📭 暂无交易历史")
-    else:
-        # 默认执行巡检
-        daily_check()
-
+    # 保留 CLI 兼容性，但建议通过 main.py 运行
+    daily_check()
