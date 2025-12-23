@@ -65,10 +65,18 @@ def backup_data():
 
 
 def save_holdings(holdings: dict):
-    """保存持仓数据（自动备份）"""
+    """保存持仓数据（原子写入 + 自动备份）"""
+    import shutil
+    
     os.makedirs(os.path.dirname(HOLDINGS_FILE), exist_ok=True)
-    with open(HOLDINGS_FILE, 'w', encoding='utf-8') as f:
+    
+    # 原子写入：先写临时文件，再重命名，防止断电丢数据
+    tmp_file = HOLDINGS_FILE + ".tmp"
+    with open(tmp_file, 'w', encoding='utf-8') as f:
         json.dump(holdings, f, ensure_ascii=False, indent=2)
+    
+    # 操作系统级别的原子操作
+    shutil.move(tmp_file, HOLDINGS_FILE)
     
     # 自动备份 (每天只备份一次)
     today = datetime.date.today().strftime('%Y%m%d')
@@ -90,7 +98,7 @@ def add_position(
     note: str = ""
 ):
     """
-    添加持仓
+    添加持仓 (支持加仓合并)
     
     Args:
         code: 股票代码
@@ -102,17 +110,44 @@ def add_position(
     """
     holdings = load_holdings()
     
-    holdings[code] = {
-        "name": name,
-        "buy_price": buy_price,
-        "buy_date": datetime.date.today().strftime("%Y-%m-%d"),
-        "quantity": quantity,
-        "strategy": strategy,
-        "note": note
-    }
-    
-    save_holdings(holdings)
-    print(f"✅ 已添加持仓: {code} {name} @ {buy_price}")
+    if code in holdings:
+        # ---【加仓合并逻辑】---
+        old_info = holdings[code]
+        old_qty = old_info.get('quantity', 0)
+        old_price = old_info.get('buy_price', 0)
+        
+        # 计算加权平均成本
+        total_qty = old_qty + quantity
+        if total_qty > 0 and old_qty > 0:
+            new_price = (old_price * old_qty + buy_price * quantity) / total_qty
+        else:
+            new_price = buy_price
+            total_qty = max(total_qty, quantity)
+        
+        # 更新持仓信息
+        holdings[code].update({
+            "buy_price": round(new_price, 3),  # 更新成本
+            "quantity": total_qty,              # 累加数量
+            "note": f"{old_info.get('note', '')} | 加仓@{buy_price}" if note == '' else note
+        })
+        # 策略类型不更新，保持原来的
+        # 买入日期不更新，保留最早日期
+        
+        save_holdings(holdings)
+        print(f"🔄 已合并持仓: {code} {name}")
+        print(f"   新成本: {new_price:.3f} | 数量: {total_qty}")
+    else:
+        # 新开仓
+        holdings[code] = {
+            "name": name,
+            "buy_price": buy_price,
+            "buy_date": datetime.date.today().strftime("%Y-%m-%d"),
+            "quantity": quantity,
+            "strategy": strategy,
+            "note": note
+        }
+        save_holdings(holdings)
+        print(f"✅ 已添加持仓: {code} {name} @ {buy_price}")
 
 
 def remove_position(code: str):
@@ -147,7 +182,7 @@ def get_latest_results_file() -> str:
     return os.path.join(RESULTS_DIR, files[-1])
 
 
-def close_position(code: str, sell_price: float = None, sell_quantity: int = 0):
+def close_position(code: str, sell_price: float = None, sell_quantity: int = 0, force: bool = False):
     """
     平仓并归档交易记录 (支持减仓)
     
@@ -155,6 +190,7 @@ def close_position(code: str, sell_price: float = None, sell_quantity: int = 0):
         code: 股票代码
         sell_price: 卖出价格（不传则获取当前价）
         sell_quantity: 卖出数量，0 表示全部卖出
+        force: 强制卖出（跳过T+1检查，用于做T等特殊情况）
     """
     holdings = load_holdings()
     
@@ -164,6 +200,17 @@ def close_position(code: str, sell_price: float = None, sell_quantity: int = 0):
     
     info = holdings[code]
     total_qty = info.get('quantity', 0)
+    
+    # ---【T+1 限制检查】---
+    buy_date_str = info['buy_date']
+    today_str = datetime.date.today().strftime("%Y-%m-%d")
+    
+    if buy_date_str == today_str and not force:
+        print(f"❌ 拒绝卖出: {code} {info['name']}")
+        print(f"   该股票是今日({today_str})买入的持仓 (A股T+1限制)")
+        print(f"   如果确实需要卖出(如做T)，请使用: --close {code},{sell_price or '价格'},数量,force")
+        return
+    # -----------------------
     
     # 如果没有传卖出价，获取当前价
     if sell_price is None:
@@ -471,12 +518,13 @@ if __name__ == "__main__":
     elif args.remove:
         remove_position(args.remove)
     elif args.close:
-        # 支持格式: 代码 或 代码,卖出价 或 代码,卖出价,数量
+        # 支持格式: 代码 或 代码,卖出价 或 代码,卖出价,数量 或 代码,卖出价,数量,force
         parts = args.close.split(',')
         code = parts[0]
-        sell_price = float(parts[1]) if len(parts) > 1 else None
-        sell_quantity = int(parts[2]) if len(parts) > 2 else 0
-        close_position(code, sell_price, sell_quantity)
+        sell_price = float(parts[1]) if len(parts) > 1 and parts[1] else None
+        sell_quantity = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+        force = len(parts) > 3 and parts[3].lower() == 'force'
+        close_position(code, sell_price, sell_quantity, force)
     elif args.import_csv:
         if args.import_csv == 'today':
             import_from_csv()

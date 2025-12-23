@@ -131,6 +131,13 @@ BLACKLIST = load_blacklist()
 # 风控配置
 # ============================================
 RISK_CONTROL = {
+    # 大盘风控
     'market_drop_threshold': -1.5,  # 大盘跌幅阈值（超过此值给出警告）
     'sentiment_threshold': 0.2,     # 赚钱效应阈值（上涨家数占比低于此值警告）
+    
+    # 集合竞价预警阈值
+    'premarket_low_open': -2.0,     # 低开预警阈值 (%)
+    'premarket_critical': -3.0,     # 核按钮预警阈值 (%)
+    'premarket_high_stable': 2.0,   # 稳健标的高开止盈阈值 (%)
+    'premarket_high_open': 3.0,     # 高开预警阈值 (%)
 }

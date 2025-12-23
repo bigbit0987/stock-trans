@@ -20,11 +20,19 @@ sys.path.insert(0, PROJECT_ROOT)
 import akshare as ak
 import pandas as pd
 
-# 预警阈值配置
-LOW_OPEN_THRESHOLD = -2.0      # 低开预警阈值 (%)
-LOW_OPEN_CRITICAL = -3.0       # 核按钮预警阈值 (%)
-HIGH_OPEN_STABLE = 2.0         # 稳健标的高开止盈阈值 (%)
-HIGH_OPEN_THRESHOLD = 3.0      # 高开预警阈值 (%)
+# 从配置文件读取阈值（保持单一信源）
+try:
+    from config import RISK_CONTROL
+    LOW_OPEN_THRESHOLD = RISK_CONTROL.get('premarket_low_open', -2.0)
+    LOW_OPEN_CRITICAL = RISK_CONTROL.get('premarket_critical', -3.0)
+    HIGH_OPEN_STABLE = RISK_CONTROL.get('premarket_high_stable', 2.0)
+    HIGH_OPEN_THRESHOLD = RISK_CONTROL.get('premarket_high_open', 3.0)
+except ImportError:
+    # 配置文件不存在时使用默认值
+    LOW_OPEN_THRESHOLD = -2.0
+    LOW_OPEN_CRITICAL = -3.0
+    HIGH_OPEN_STABLE = 2.0
+    HIGH_OPEN_THRESHOLD = 3.0
 
 # 持仓文件路径
 HOLDINGS_FILE = os.path.join(PROJECT_ROOT, "data", "holdings.json")
