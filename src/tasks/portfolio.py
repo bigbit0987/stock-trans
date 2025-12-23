@@ -130,6 +130,7 @@ def add_position(
         holdings[code].update({
             "buy_price": round(new_price, 3),  # 更新成本
             "quantity": total_qty,              # 累加数量
+            "highest_price": max(old_info.get('highest_price', 0), buy_price), # 维持/更新最高价
             "note": f"{old_info.get('note', '')} | 加仓@{buy_price}" if note == '' else note
         })
         # 策略类型不更新，保持原来的
@@ -143,6 +144,7 @@ def add_position(
         holdings[code] = {
             "name": name,
             "buy_price": buy_price,
+            "highest_price": buy_price,
             "buy_date": datetime.date.today().strftime("%Y-%m-%d"),
             "quantity": quantity,
             "strategy": strategy,
@@ -352,6 +354,7 @@ def daily_check():
     logger.info(f"\n当前持仓: {len(holdings)} 只\n")
     
     alerts = []
+    needs_save = False
     
     for code, info in holdings.items():
         name = info['name']
@@ -366,8 +369,16 @@ def daily_check():
             logger.warning(f"  ⚠️ {code} {name}: 数据获取失败")
             continue
         
-        # 计算盈亏
+        # ---【更新持仓期间最高价】---
+        highest = info.get('highest_price', buy_price)
+        if current > highest:
+            highest = current
+            holdings[code]['highest_price'] = highest
+            needs_save = True
+            
+        # 计算盈亏和从最高点的回撤
         pnl = (current - buy_price) / buy_price * 100
+        drawdown = (current - highest) / highest * 100 if highest > 0 else 0
         pnl_str = f"{pnl:+.2f}%"
         
         # 持仓天数
@@ -383,31 +394,47 @@ def daily_check():
             
             # 趋势核心股跌破MA5需要止损
             if strategy == "RPS_CORE":
-                action = "🚨 止损信号！(跌破5日线)"
+                action = "🚨 止盈/止损信号！(跌破5日线)"
                 alerts.append({
                     'code': code,
                     'name': name,
                     'current': current,
                     'ma5': ma5,
                     'pnl': pnl,
-                    'action': '建议止损'
+                    'action': '跌破5日线，建议离场'
                 })
         elif pnl < -5:
             status = "🟡"
             action = "注意亏损"
         elif pnl > 10:
-            status = "🟢"
-            action = "可考虑止盈"
+            # 动态止盈：收益超 10% 后，回撤超过 3% 强制提醒
+            if drawdown < -3:
+                status = "🚨"
+                action = f"📉 回撤止盈警报！(最大浮盈后回撤 {drawdown:.1f}%)"
+            else:
+                status = "🟢"
+                action = "💰 止盈提醒！收益超 10%"
+                
+            alerts.append({
+                'code': code,
+                'name': name,
+                'current': current,
+                'ma5': ma5,
+                'pnl': pnl,
+                'action': action
+            })
         
         logger.info(f"  {status} {code} {name}")
         logger.info(f"     买入: {buy_price} ({buy_date}, 持有{days_held}天)")
         ma5_str = f"{ma5:.3f}" if ma5 else "N/A"
-        logger.info(f"     现价: {current:.2f} | MA5: {ma5_str} | 盈亏: {pnl_str}")
+        logger.info(f"     现价: {current:.2f} | 最高: {highest:.2f} | 盈亏: {pnl_str} (回撤: {drawdown:.1f}%)")
         if action:
             logger.info(f"     👉 {action}")
         logger.info("")
     
-    # 汇总警报
+    # 如果更新了最高价，保存持仓文件
+    if needs_save:
+        save_holdings(holdings)
     if alerts:
         logger.info("=" * 60)
         logger.info("🚨 需要立即关注的持仓:")

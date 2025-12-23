@@ -11,17 +11,30 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
 
 
+def clean_old_logs():
+    """清理超过 30 天的旧日志"""
+    try:
+        if not os.path.exists(LOGS_DIR):
+            return
+        now = datetime.now()
+        for filename in os.listdir(LOGS_DIR):
+            file_path = os.path.join(LOGS_DIR, filename)
+            if os.path.isfile(file_path) and filename.endswith('.log'):
+                # 获取文件最后修改时间
+                file_time = datetime.fromtimestamp(os.path.getmtime(file_path))
+                if (now - file_time).days > 30:
+                    os.remove(file_path)
+    except Exception:
+        pass
+
+
 def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
     """
     配置并返回一个 Logger
-    
-    Args:
-        name: Logger 名称
-        level: 日志级别
-    
-    Returns:
-        配置好的 Logger 实例
     """
+    # 自动清理旧日志
+    clean_old_logs()
+    
     # 创建 logs 目录
     os.makedirs(LOGS_DIR, exist_ok=True)
     

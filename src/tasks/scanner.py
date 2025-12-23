@@ -7,6 +7,7 @@ import os
 import sys
 import datetime
 import pandas as pd
+import glob
 
 # 添加项目根目录到路径
 # 路径层级: src/tasks/scanner.py -> src/tasks/ -> src/ -> stock_trans/
@@ -15,7 +16,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 import akshare as ak
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from config import STRATEGY, RESULTS_DIR, CONCURRENT, RISK_CONTROL
+from config import STRATEGY, RESULTS_DIR, CONCURRENT, RISK_CONTROL, RPS_DATA_DIR
 from src.data_loader import get_realtime_quotes, load_latest_rps, get_stock_history
 from src.strategy import filter_by_basic_conditions, generate_signal
 from src.utils import logger
@@ -96,6 +97,19 @@ def run_scan():
     has_rps = rps_df is not None
     if not has_rps:
         logger.error("⚠️ 未找到 RPS 数据，请先运行 update_rps.py")
+    else:
+        # 检查数据是否过期 (Data Integrity)
+        list_of_files = glob.glob(os.path.join(RPS_DATA_DIR, 'rps_rank_*.csv'))
+        if list_of_files:
+            latest_file = max(list_of_files, key=os.path.getctime)
+            file_date_str = os.path.basename(latest_file).split('_')[-1].replace('.csv', '')
+            today_str = datetime.datetime.now().strftime('%Y%m%d')
+            
+            if file_date_str != today_str:
+                logger.warning("!" * 60)
+                logger.warning(f"⚠️ 警告: 使用的 RPS 数据过期！({file_date_str})")
+                logger.warning("   建议先运行: python main.py update")
+                logger.warning("!" * 60)
     
     # 第一轮筛选: 统计数据筛选 (价格、涨幅、成交量、量比、MA5乖离等)
     logger.info("\n🔍 第一轮筛选: 基础条件筛选中...")
@@ -145,9 +159,9 @@ def run_scan():
                     # 计算 RPS (如果存在)
                     rps_score = 0
                     if has_rps:
-                        rps_row = rps_df[rps_df['symbol'] == code]
+                        rps_row = rps_df[rps_df['代码'] == code]
                         if not rps_row.empty:
-                            rps_score = rps_row.iloc[0]['rps']
+                            rps_score = rps_row.iloc[0]['RPS']
                     
                     # 提取前一天数据 (hist 的最后一行通常是前一个交易日)
                     prev_day = hist.iloc[-1]

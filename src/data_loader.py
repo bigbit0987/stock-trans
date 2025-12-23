@@ -127,6 +127,6 @@ def load_latest_rps() -> Optional[pd.DataFrame]:
     
     print(f"📖 加载 RPS 数据: {latest_file}")
     df = pd.read_csv(filepath)
-    df['symbol'] = df['symbol'].astype(str).str.zfill(6)
+    df['代码'] = df['代码'].astype(str).str.zfill(6)
     
     return df
