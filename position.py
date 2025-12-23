@@ -83,13 +83,34 @@ def remove_position(code: str):
         print(f"⚠️ 未找到持仓: {code}")
 
 
-def close_position(code: str, sell_price: float = None):
+def get_latest_results_file() -> str:
     """
-    平仓并归档交易记录
+    获取 output/results 目录下最新的选股结果 CSV 文件
+    解决周一导入找不到文件的问题
+    """
+    if not os.path.exists(RESULTS_DIR):
+        return None
+    
+    # 获取所有以 '选股结果_' 开头的文件
+    files = [f for f in os.listdir(RESULTS_DIR) 
+             if f.startswith('选股结果_') and f.endswith('.csv')]
+    
+    if not files:
+        return None
+    
+    # 按文件名排序（因为文件名包含日期，排序后最后一个就是最新的）
+    files.sort()
+    return os.path.join(RESULTS_DIR, files[-1])
+
+
+def close_position(code: str, sell_price: float = None, sell_quantity: int = 0):
+    """
+    平仓并归档交易记录 (支持减仓)
     
     Args:
         code: 股票代码
         sell_price: 卖出价格（不传则获取当前价）
+        sell_quantity: 卖出数量，0 表示全部卖出
     """
     holdings = load_holdings()
     
@@ -98,6 +119,7 @@ def close_position(code: str, sell_price: float = None):
         return
     
     info = holdings[code]
+    total_qty = info.get('quantity', 0)
     
     # 如果没有传卖出价，获取当前价
     if sell_price is None:
@@ -113,10 +135,14 @@ def close_position(code: str, sell_price: float = None):
             print(f"❌ 无法获取 {code} 当前价格，请手动指定卖出价")
             return
     
+    # 判断是全部卖出还是部分卖出
+    is_sell_all = (sell_quantity == 0) or (total_qty == 0) or (sell_quantity >= total_qty)
+    actual_sell_qty = total_qty if is_sell_all else sell_quantity
+    
     # 计算盈亏
     buy_price = info['buy_price']
     pnl = (sell_price - buy_price) / buy_price * 100
-    pnl_amount = (sell_price - buy_price) * info.get('quantity', 0)
+    pnl_amount = (sell_price - buy_price) * actual_sell_qty
     
     # 计算持仓天数
     buy_date = datetime.datetime.strptime(info['buy_date'], '%Y-%m-%d').date()
@@ -132,32 +158,39 @@ def close_position(code: str, sell_price: float = None):
     with open(archive_file, 'a', newline='', encoding='utf-8-sig') as f:
         writer = csv.writer(f)
         if write_header:
-            writer.writerow(['代码', '名称', '买入价', '卖出价', '盈亏%', '持仓天数', 
-                            '策略', '买入日期', '卖出日期', '备注'])
+            writer.writerow(['代码', '名称', '买入价', '卖出价', '盈亏%', '卖出数量',
+                            '持仓天数', '策略', '买入日期', '卖出日期', '备注'])
         writer.writerow([
             code,
             info['name'],
             buy_price,
             sell_price,
             f"{pnl:.2f}",
+            actual_sell_qty,
             days_held,
             info.get('strategy', 'STABLE'),
             info['buy_date'],
             datetime.date.today().strftime('%Y-%m-%d'),
-            info.get('note', '')
+            '减仓' if not is_sell_all else '清仓'
         ])
     
-    # 从持仓删除
-    del holdings[code]
+    # 更新或删除持仓
+    if is_sell_all:
+        del holdings[code]
+        action = "💰 全部清仓"
+    else:
+        holdings[code]['quantity'] -= actual_sell_qty
+        action = f"💰 减仓 {actual_sell_qty} 股 (剩余 {holdings[code]['quantity']} 股)"
+    
     save_holdings(holdings)
     
     # 显示结果
     if pnl >= 0:
-        print(f"💰 已平仓: {code} {info['name']}")
+        print(f"{action}: {code} {info['name']}")
         print(f"   买入: {buy_price} → 卖出: {sell_price}")
         print(f"   盈利: {pnl:+.2f}% (持有{days_held}天)")
     else:
-        print(f"📉 已平仓: {code} {info['name']}")
+        print(f"📉 {action}: {code} {info['name']}")
         print(f"   买入: {buy_price} → 卖出: {sell_price}")
         print(f"   亏损: {pnl:.2f}% (持有{days_held}天)")
     
@@ -316,24 +349,19 @@ def import_from_csv(csv_path: str = None, strategy: str = "STABLE"):
     从选股结果 CSV 导入持仓
     
     Args:
-        csv_path: CSV 文件路径，默认使用今日选股结果
+        csv_path: CSV 文件路径，默认自动查找最新的选股结果
         strategy: 默认策略类型
     """
     if csv_path is None:
-        today = datetime.date.today().strftime('%Y%m%d')
-        csv_path = os.path.join(RESULTS_DIR, f"选股结果_{today}.csv")
-        
-        # ---【午夜幽灵修复】凌晨操作时自动尝试昨天的文件---
-        if not os.path.exists(csv_path):
-            yesterday = (datetime.date.today() - datetime.timedelta(days=1)).strftime('%Y%m%d')
-            yesterday_path = os.path.join(RESULTS_DIR, f"选股结果_{yesterday}.csv")
-            if os.path.exists(yesterday_path):
-                print(f"⚠️ 今天的文件不存在，自动使用昨天的文件")
-                csv_path = yesterday_path
-        # -----------------------------------------
+        # 使用智能查找，自动定位最新的选股结果文件
+        # 解决周一导入周五文件、凌晨导入等问题
+        csv_path = get_latest_results_file()
+        if csv_path:
+            print(f"📄 自动定位到最新文件: {os.path.basename(csv_path)}")
     
-    if not os.path.exists(csv_path):
-        print(f"❌ 文件不存在: {csv_path}")
+    if not csv_path or not os.path.exists(csv_path):
+        print(f"❌ 未找到选股结果文件")
+        print(f"   请先运行 scan.py 生成选股结果")
         return
     
     df = pd.read_csv(csv_path)
@@ -399,10 +427,12 @@ if __name__ == "__main__":
     elif args.remove:
         remove_position(args.remove)
     elif args.close:
+        # 支持格式: 代码 或 代码,卖出价 或 代码,卖出价,数量
         parts = args.close.split(',')
         code = parts[0]
         sell_price = float(parts[1]) if len(parts) > 1 else None
-        close_position(code, sell_price)
+        sell_quantity = int(parts[2]) if len(parts) > 2 else 0
+        close_position(code, sell_price, sell_quantity)
     elif args.import_csv:
         if args.import_csv == 'today':
             import_from_csv()

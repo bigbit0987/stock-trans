@@ -90,13 +90,16 @@ python position.py --check
 ```
 会检查每只持仓是否跌破 MA5，对于 `RPS_CORE` 策略的股票给出止损警告。
 
-### 平仓（记录盈亏）
+### 平仓（支持减仓）
 ```bash
-# 使用当前价平仓
+# 使用当前价全部平仓
 python position.py --close 600000
 
-# 指定卖出价平仓
+# 指定卖出价全部平仓
 python position.py --close 600000,11.5
+
+# 减仓500股（潜力股次日冲高卖一半）
+python position.py --close 600000,11.5,500
 ```
 平仓后会自动归档到 `data/trade_history.csv`。
 

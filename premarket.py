@@ -5,7 +5,9 @@
 
 功能：
 1. 检测低开超过 -2% 的持仓（可能利空泄露，准备竞价出逃）
-2. 检测高开超过 +3% 的持仓（主力抢筹，考虑止盈）
+2. 核按钮预警：低开超过 -3% 立刻报警！（9:24 挂跌停价出逃）
+3. 检测高开超过 +2% 的持仓（对于稳健标的考虑止盈）
+4. 检测高开超过 +3% 的持仓（主力抢筹，可止盈一部分）
 """
 import os
 import sys
@@ -18,9 +20,11 @@ sys.path.insert(0, PROJECT_ROOT)
 import akshare as ak
 import pandas as pd
 
-# 配置
-LOW_OPEN_THRESHOLD = -2.0    # 低开预警阈值 (%)
-HIGH_OPEN_THRESHOLD = 3.0    # 高开预警阈值 (%)
+# 预警阈值配置
+LOW_OPEN_THRESHOLD = -2.0      # 低开预警阈值 (%)
+LOW_OPEN_CRITICAL = -3.0       # 核按钮预警阈值 (%)
+HIGH_OPEN_STABLE = 2.0         # 稳健标的高开止盈阈值 (%)
+HIGH_OPEN_THRESHOLD = 3.0      # 高开预警阈值 (%)
 
 # 持仓文件路径
 HOLDINGS_FILE = os.path.join(PROJECT_ROOT, "data", "holdings.json")
@@ -97,13 +101,32 @@ def check_premarket():
         # 计算跳空幅度
         gap_pct = (open_price - prev_close) / prev_close * 100
         
-        # 判断预警
+        # 获取策略类型
+        strategy = info.get('strategy', 'STABLE')
+        
+        # 判断预警 (根据跳空幅度和策略类型)
         status = "✅"
         alert_info = None
         
-        if gap_pct <= LOW_OPEN_THRESHOLD:
+        # 核按钮预警：低开超过 -3%，必须立刻处理！
+        if gap_pct <= LOW_OPEN_CRITICAL:
+            status = "🆘"  # 核按钮
+            action = f"🚨 核按钮预警！低开 {gap_pct:.2f}%，9:24 挂跌停价出逃！"
+            alert_info = {
+                'code': code,
+                'name': name,
+                'open_price': open_price,
+                'prev_close': prev_close,
+                'gap_pct': gap_pct,
+                'alert_type': 'CRITICAL',
+                'strategy': strategy,
+                'action': action
+            }
+            alerts.append(alert_info)
+        # 普通低开预警
+        elif gap_pct <= LOW_OPEN_THRESHOLD:
             status = "🔴"
-            action = f"低开 {gap_pct:.2f}%，考虑竞价出逃！"
+            action = f"低开 {gap_pct:.2f}%，关注是否继续走弱"
             alert_info = {
                 'code': code,
                 'name': name,
@@ -111,12 +134,14 @@ def check_premarket():
                 'prev_close': prev_close,
                 'gap_pct': gap_pct,
                 'alert_type': 'LOW',
+                'strategy': strategy,
                 'action': action
             }
             alerts.append(alert_info)
+        # 高开预警（根据策略区分）
         elif gap_pct >= HIGH_OPEN_THRESHOLD:
             status = "🟢"
-            action = f"高开 {gap_pct:+.2f}%，考虑止盈！"
+            action = f"高开 {gap_pct:+.2f}%，可考虑止盈一部分"
             alert_info = {
                 'code': code,
                 'name': name,
@@ -124,12 +149,28 @@ def check_premarket():
                 'prev_close': prev_close,
                 'gap_pct': gap_pct,
                 'alert_type': 'HIGH',
+                'strategy': strategy,
+                'action': action
+            }
+            alerts.append(alert_info)
+        # 稳健标的高开 +2% 即可考虑止盈
+        elif strategy == 'STABLE' and gap_pct >= HIGH_OPEN_STABLE:
+            status = "🟡"
+            action = f"稳健标的高开 {gap_pct:+.2f}%，吃完这一口就跑！"
+            alert_info = {
+                'code': code,
+                'name': name,
+                'open_price': open_price,
+                'prev_close': prev_close,
+                'gap_pct': gap_pct,
+                'alert_type': 'STABLE_HIGH',
+                'strategy': strategy,
                 'action': action
             }
             alerts.append(alert_info)
         
         # 打印信息
-        print(f"  {status} {code} {name}")
+        print(f"  {status} {code} {name} [{strategy}]")
         print(f"     昨收: {prev_close:.2f} → 竞价: {open_price:.2f} (跳空: {gap_pct:+.2f}%)")
         if alert_info:
             print(f"     👉 {alert_info['action']}")
