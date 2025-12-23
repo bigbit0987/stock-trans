@@ -376,7 +376,8 @@ def daily_check():
             holdings[code]['highest_price'] = highest
             needs_save = True
             
-        # 计算盈亏和从最高点的回撤
+        # 计算 历史最高盈亏比例
+        max_pnl = (highest - buy_price) / buy_price * 100
         pnl = (current - buy_price) / buy_price * 100
         drawdown = (current - highest) / highest * 100 if highest > 0 else 0
         pnl_str = f"{pnl:+.2f}%"
@@ -392,7 +393,7 @@ def daily_check():
             status = "🔴"
             action = "⚠️ 跌破MA5！"
             
-            # 趋势核心股跌破MA5需要止损
+            # 趋势核心股跌破MA5需要止盈/止损
             if strategy == "RPS_CORE":
                 action = "🚨 止盈/止损信号！(跌破5日线)"
                 alerts.append({
@@ -403,18 +404,10 @@ def daily_check():
                     'pnl': pnl,
                     'action': '跌破5日线，建议离场'
                 })
-        elif pnl < -5:
-            status = "🟡"
-            action = "注意亏损"
-        elif pnl > 10:
-            # 动态止盈：收益超 10% 后，回撤超过 3% 强制提醒
-            if drawdown < -3:
-                status = "🚨"
-                action = f"📉 回撤止盈警报！(最大浮盈后回撤 {drawdown:.1f}%)"
-            else:
-                status = "🟢"
-                action = "💰 止盈提醒！收益超 10%"
-                
+        elif max_pnl > 10 and drawdown < -3:
+            # 【修复】回撤判定：只要历史最高浮盈过10%，且回撤超3%，强制预警
+            status = "🚨"
+            action = f"📉 回撤止盈警报！(最高浮盈 {max_pnl:.1f}% 后回撤 {drawdown:.1f}%)"
             alerts.append({
                 'code': code,
                 'name': name,
@@ -423,6 +416,21 @@ def daily_check():
                 'pnl': pnl,
                 'action': action
             })
+        elif pnl > 10:
+            # 当前还在高位，报喜
+            status = "🟢"
+            action = "💰 止盈提醒！收益超 10%"
+            alerts.append({
+                'code': code,
+                'name': name,
+                'current': current,
+                'ma5': ma5,
+                'pnl': pnl,
+                'action': action
+            })
+        elif pnl < -5:
+            status = "🟡"
+            action = "注意亏损"
         
         logger.info(f"  {status} {code} {name}")
         logger.info(f"     买入: {buy_price} ({buy_date}, 持有{days_held}天)")

@@ -13,6 +13,42 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from src.utils import logger
 
+def check_environment():
+    """启动自检，确保配置环境正确"""
+    logger.info("🔍 启动环境自检...")
+    
+    # 1. 检查配置
+    try:
+        from config import NOTIFY, BASE_DIR, DATA_DIR
+        if not NOTIFY.get('dingtalk_webhook'):
+            logger.warning("   ⚠️ 未配置钉钉推送，重要信号可能无法接收！")
+        else:
+            logger.info("   ✅ 消息推送配置已就绪")
+            
+        # 2. 检查关键目录
+        missing_dirs = []
+        for d in [DATA_DIR]:
+            if not os.path.exists(d):
+                missing_dirs.append(d)
+        
+        if missing_dirs:
+            for md in missing_dirs:
+                os.makedirs(md, exist_ok=True)
+                logger.info(f"   📂 已创建缺失目录: {md}")
+        else:
+            logger.info("   ✅ 基础目录检查通过")
+            
+        # 3. 检查敏感文件
+        env_file = os.path.join(PROJECT_ROOT, ".env")
+        if not os.path.exists(env_file):
+            logger.warning("   ⚠️ 未发现 .env 文件，如果需要推送通知，请根据 .env.example 创建")
+            
+    except Exception as e:
+        logger.error(f"   ❌ 自检过程出错: {e}")
+        return False
+    
+    return True
+
 def cmd_scan(args):
     """执行尾盘选股"""
     from src.tasks.scanner import run_scan
@@ -181,6 +217,11 @@ def main():
     
     if not args.command:
         parser.print_help()
+        return
+
+    # 启动自检
+    if not check_environment():
+        logger.error("❌ 环境自检失败，请检查配置后重试。")
         return
 
     # 命令路由执行

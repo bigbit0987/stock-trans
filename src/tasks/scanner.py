@@ -16,7 +16,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 import akshare as ak
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from config import STRATEGY, RESULTS_DIR, CONCURRENT, RISK_CONTROL, RPS_DATA_DIR
+from config import STRATEGY, RESULTS_DIR, CONCURRENT, RISK_CONTROL, RPS_DATA_DIR, CAPITAL
 from src.data_loader import get_realtime_quotes, load_latest_rps, get_stock_history
 from src.strategy import filter_by_basic_conditions, generate_signal
 from src.utils import logger
@@ -179,6 +179,14 @@ def run_scan():
                     )
                     
                     if strategy_result:
+                        # ---【计算建议仓位】---
+                        target_amt = CAPITAL.get('target_amount_per_stock', 0)
+                        if target_amt > 0:
+                            # 为每只股票计算建议手数 (向下取整到 100 股)
+                            current_price = strategy_result['现价']
+                            suggested_vol = int(target_amt / current_price / 100) * 100
+                            strategy_result['建议买入'] = f"{suggested_vol} 股"
+                        
                         signals.append(strategy_result)
             except Exception as e:
                 logger.error(f"   ⚠️ 处理 {code} 出错: {e}")
@@ -202,8 +210,11 @@ def run_scan():
     logger.info(f"📄 结果已保存至: {output_path}")
     logger.info("-" * 60)
     
-    # 打印前 5 只（或者全部）
-    print_df = results_df.head(10)[['代码', '名称', '现价', 'RPS', '分类']]
+    # 打印前 10 只
+    cols = ['代码', '名称', '现价', 'RPS', '分类']
+    if '建议买入' in results_df.columns:
+        cols.append('建议买入')
+    print_df = results_df.head(10)[cols]
     logger.info(print_df.to_string(index=False))
     logger.info("=" * 60)
     
