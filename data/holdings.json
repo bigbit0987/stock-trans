@@ -62,13 +62,5 @@
     "quantity": 0,
     "strategy": "STABLE",
     "note": ""
-  },
-  "002510": {
-    "name": "天汽模",
-    "buy_price": 7.26,
-    "buy_date": "2025-12-23",
-    "quantity": 0,
-    "strategy": "STABLE",
-    "note": ""
   }
 }

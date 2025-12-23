@@ -14,7 +14,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 import akshare as ak
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from config import STRATEGY, RESULTS_DIR, CONCURRENT
+from config import STRATEGY, RESULTS_DIR, CONCURRENT, RISK_CONTROL
 from src.data_loader import get_realtime_quotes, load_latest_rps, get_stock_history
 from src.strategy import filter_by_basic_conditions, generate_signal
 
@@ -51,14 +51,19 @@ def check_market_risk(realtime_df: pd.DataFrame = None) -> tuple:
         print(f"   上证指数: {sh_pct:+.2f}%")
         print(f"   涨/跌家数: {up_count}/{down_count} (赚钱效应: {sentiment:.0%})")
         
-        # 判定逻辑: 指数大跌 OR 全场普跌(上涨不足20%)
-        is_safe = (sh_pct > -1.5) and (sentiment > 0.2)
+        # 使用配置文件中的阈值
+        drop_threshold = RISK_CONTROL.get('market_drop_threshold', -1.5)
+        sentiment_threshold = RISK_CONTROL.get('sentiment_threshold', 0.2)
+        
+        # 判定逻辑: 指数大跌 OR 全场普跌
+        is_safe = (sh_pct > drop_threshold) and (sentiment > sentiment_threshold)
         
         return is_safe, sh_pct, sentiment
         
     except Exception as e:
-        print(f"   风控检查出错: {e}")
-        return True, 0, 0.5
+        print(f"   ⚠️ 风控检查出错: {e}")
+        print(f"   ⚠️ 默认返回"不安全"，请检查网络")
+        return False, 0, 0  # 风控失败时默认不安全！
 
 
 def run_scan():
@@ -67,6 +72,11 @@ def run_scan():
     print("🚀 尾盘选股扫描")
     print(f"   时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
+    
+    # 检查是否周末
+    weekday = datetime.datetime.today().weekday()
+    if weekday >= 5:
+        print("\n⚠️ 警告：今天是周末，A股不开市，数据可能未更新！")
     
     # 获取实时行情 (先获取，用于风控和筛选)
     df = get_realtime_quotes()

@@ -72,7 +72,7 @@ def add_position(
 
 
 def remove_position(code: str):
-    """移除持仓"""
+    """移除持仓（不归档）"""
     holdings = load_holdings()
     
     if code in holdings:
@@ -81,6 +81,87 @@ def remove_position(code: str):
         print(f"✅ 已移除持仓: {code} {info['name']}")
     else:
         print(f"⚠️ 未找到持仓: {code}")
+
+
+def close_position(code: str, sell_price: float = None):
+    """
+    平仓并归档交易记录
+    
+    Args:
+        code: 股票代码
+        sell_price: 卖出价格（不传则获取当前价）
+    """
+    holdings = load_holdings()
+    
+    if code not in holdings:
+        print(f"⚠️ 未找到持仓: {code}")
+        return
+    
+    info = holdings[code]
+    
+    # 如果没有传卖出价，获取当前价
+    if sell_price is None:
+        try:
+            df = ak.stock_zh_a_spot_em()
+            stock = df[df['代码'] == code]
+            if not stock.empty:
+                sell_price = stock.iloc[0]['最新价']
+            else:
+                print(f"❌ 无法获取 {code} 当前价格，请手动指定卖出价")
+                return
+        except:
+            print(f"❌ 无法获取 {code} 当前价格，请手动指定卖出价")
+            return
+    
+    # 计算盈亏
+    buy_price = info['buy_price']
+    pnl = (sell_price - buy_price) / buy_price * 100
+    pnl_amount = (sell_price - buy_price) * info.get('quantity', 0)
+    
+    # 计算持仓天数
+    buy_date = datetime.datetime.strptime(info['buy_date'], '%Y-%m-%d').date()
+    days_held = (datetime.date.today() - buy_date).days
+    
+    # 写入归档 CSV
+    archive_file = os.path.join(PROJECT_ROOT, "data", "trade_history.csv")
+    
+    # 检查是否需要写入表头
+    write_header = not os.path.exists(archive_file)
+    
+    import csv
+    with open(archive_file, 'a', newline='', encoding='utf-8-sig') as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(['代码', '名称', '买入价', '卖出价', '盈亏%', '持仓天数', 
+                            '策略', '买入日期', '卖出日期', '备注'])
+        writer.writerow([
+            code,
+            info['name'],
+            buy_price,
+            sell_price,
+            f"{pnl:.2f}",
+            days_held,
+            info.get('strategy', 'STABLE'),
+            info['buy_date'],
+            datetime.date.today().strftime('%Y-%m-%d'),
+            info.get('note', '')
+        ])
+    
+    # 从持仓删除
+    del holdings[code]
+    save_holdings(holdings)
+    
+    # 显示结果
+    if pnl >= 0:
+        print(f"💰 已平仓: {code} {info['name']}")
+        print(f"   买入: {buy_price} → 卖出: {sell_price}")
+        print(f"   盈利: {pnl:+.2f}% (持有{days_held}天)")
+    else:
+        print(f"📉 已平仓: {code} {info['name']}")
+        print(f"   买入: {buy_price} → 卖出: {sell_price}")
+        print(f"   亏损: {pnl:.2f}% (持有{days_held}天)")
+    
+    print(f"   📝 已归档到: data/trade_history.csv")
 
 
 def get_stock_ma5(code: str) -> tuple:
@@ -101,10 +182,19 @@ def get_stock_ma5(code: str) -> tuple:
         
         # 获取历史数据计算 MA5
         hist = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
-        if len(hist) < 5:
+        
+        # ---【日期安全检查】防止收盘后数据双重计算---
+        today_str = datetime.date.today().strftime('%Y-%m-%d')
+        hist['日期_str'] = pd.to_datetime(hist['日期']).dt.strftime('%Y-%m-%d')
+        if not hist.empty and hist.iloc[-1]['日期_str'] == today_str:
+            # 如果最后一行是今天，切掉它！
+            hist = hist.iloc[:-1]
+        # -----------------------------------------
+        
+        if len(hist) < 4:  # 至少需要4天历史
             return current_price, None, None
         
-        # 计算实时 MA5
+        # 计算实时 MA5: (前4天收盘价 + 当前价) / 5
         closes = hist['收盘'].tail(4).tolist()
         ma5 = (sum(closes) + current_price) / 5
         
@@ -268,8 +358,10 @@ if __name__ == "__main__":
     parser.add_argument('--check', action='store_true', help='每日巡检')
     parser.add_argument('--list', action='store_true', help='列出持仓')
     parser.add_argument('--add', type=str, help='添加持仓: 代码,名称,买入价 (例: 600000,浦发银行,10.5)')
-    parser.add_argument('--remove', type=str, help='移除持仓: 代码')
+    parser.add_argument('--remove', type=str, help='移除持仓（不归档）: 代码')
+    parser.add_argument('--close', type=str, help='平仓（归档盈亏）: 代码[,卖出价] (例: 600000 或 600000,11.5)')
     parser.add_argument('--import-csv', type=str, nargs='?', const='today', help='从 CSV 导入持仓')
+    parser.add_argument('--history', action='store_true', help='查看交易历史')
     
     args = parser.parse_args()
     
@@ -285,11 +377,35 @@ if __name__ == "__main__":
             print("格式错误，应为: 代码,名称,买入价")
     elif args.remove:
         remove_position(args.remove)
+    elif args.close:
+        parts = args.close.split(',')
+        code = parts[0]
+        sell_price = float(parts[1]) if len(parts) > 1 else None
+        close_position(code, sell_price)
     elif args.import_csv:
         if args.import_csv == 'today':
             import_from_csv()
         else:
             import_from_csv(args.import_csv)
+    elif args.history:
+        # 查看交易历史
+        history_file = os.path.join(PROJECT_ROOT, "data", "trade_history.csv")
+        if os.path.exists(history_file):
+            df = pd.read_csv(history_file)
+            print("\n📊 交易历史:")
+            print("-" * 80)
+            print(df.to_string(index=False))
+            print("-" * 80)
+            # 统计
+            if '盈亏%' in df.columns:
+                df['盈亏%'] = df['盈亏%'].astype(float)
+                wins = len(df[df['盈亏%'] > 0])
+                total = len(df)
+                avg_pnl = df['盈亏%'].mean()
+                print(f"\n📈 统计: 共{total}笔交易, 盈利{wins}笔, 胜率{wins/total*100:.1f}%, 平均收益{avg_pnl:.2f}%")
+        else:
+            print("📭 暂无交易历史")
     else:
         # 默认执行巡检
         daily_check()
+

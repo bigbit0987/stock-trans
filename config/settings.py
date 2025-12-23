@@ -128,4 +128,5 @@ BLACKLIST = load_blacklist()
 # ============================================
 RISK_CONTROL = {
     'market_drop_threshold': -1.5,  # 大盘跌幅阈值（超过此值给出警告）
+    'sentiment_threshold': 0.2,     # 赚钱效应阈值（上涨家数占比低于此值警告）
 }
