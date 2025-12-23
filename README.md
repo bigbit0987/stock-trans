@@ -67,6 +67,7 @@ python scan.py
 | `python update_rps.py` | 更新 RPS 数据 | 每天 17:00 (收盘后) |
 | `python scan.py` | 尾盘选股 | 14:35 - 14:50 |
 | `python position.py` | 持仓巡检 | 每天早盘/盘中 |
+| `python premarket.py` | 集合竞价预警 | 9:20 - 9:25 |
 | `python backtest.py` | 策略回测 | 随时 |
 | `python scheduler.py` | 启动定时任务 | 长期运行 |
 

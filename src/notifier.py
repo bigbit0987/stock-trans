@@ -151,3 +151,62 @@ def notify_stock_signals(stocks: List[Dict]):
     """推送选股信号"""
     content = format_stock_message(stocks)
     notify_all("📊 尾盘选股信号", content)
+
+
+def notify_position_alert(alerts: List[Dict]):
+    """
+    推送持仓预警
+    
+    Args:
+        alerts: 预警列表，每个包含 code, name, current, ma5, action 等
+    """
+    if not alerts:
+        return
+    
+    lines = [f"📅 预警时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"]
+    
+    for alert in alerts:
+        lines.append(f"🚨 **{alert['code']} {alert['name']}**")
+        lines.append(f"   现价: {alert['current']:.2f} | MA5: {alert['ma5']:.3f}")
+        lines.append(f"   👉 {alert['action']}\n")
+    
+    content = "\n".join(lines)
+    notify_all("🚨 持仓止损预警", content)
+
+
+def notify_simple(title: str, message: str):
+    """
+    发送简单消息
+    
+    Args:
+        title: 标题
+        message: 消息内容
+    """
+    notify_all(title, message)
+
+
+def notify_premarket_alert(alerts: List[Dict]):
+    """
+    推送集合竞价预警
+    
+    Args:
+        alerts: 预警列表，每个包含 code, name, open_price, prev_close, gap_pct, alert_type
+    """
+    if not alerts:
+        return
+    
+    lines = [f"📅 集合竞价时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"]
+    
+    for alert in alerts:
+        if alert['alert_type'] == 'LOW':
+            lines.append(f"🔴 **{alert['code']} {alert['name']}** 低开预警")
+            lines.append(f"   昨收: {alert['prev_close']:.2f} → 竞价: {alert['open_price']:.2f}")
+            lines.append(f"   跳空: {alert['gap_pct']:.2f}% ⚠️ 考虑竞价出逃\n")
+        else:  # HIGH
+            lines.append(f"🟢 **{alert['code']} {alert['name']}** 高开预警")
+            lines.append(f"   昨收: {alert['prev_close']:.2f} → 竞价: {alert['open_price']:.2f}")
+            lines.append(f"   跳空: {alert['gap_pct']:+.2f}% 💰 考虑高开获利\n")
+    
+    content = "\n".join(lines)
+    notify_all("📢 集合竞价预警", content)
+

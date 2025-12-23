@@ -275,7 +275,7 @@ def daily_check():
         
         print(f"  {status} {code} {name}")
         print(f"     买入: {buy_price} ({buy_date}, 持有{days_held}天)")
-        ma5_str = f"{ma5:.2f}" if ma5 else "N/A"
+        ma5_str = f"{ma5:.3f}" if ma5 else "N/A"  # 保留3位小数，更精确判断粘合度
         print(f"     现价: {current:.2f} | MA5: {ma5_str} | 盈亏: {pnl_str}")
         if action:
             print(f"     👉 {action}")
@@ -290,6 +290,8 @@ def daily_check():
             print(f"  ❗ {alert['code']} {alert['name']}: {alert['action']}")
             print(f"     现价: {alert['current']:.2f} < MA5: {alert['ma5']:.2f}")
         print("\n💡 建议: RPS_CORE 策略股票跌破5日线应止损出局！")
+    
+    return alerts  # 返回警报列表，用于推送
 
 
 def list_holdings():
@@ -320,6 +322,15 @@ def import_from_csv(csv_path: str = None, strategy: str = "STABLE"):
     if csv_path is None:
         today = datetime.date.today().strftime('%Y%m%d')
         csv_path = os.path.join(RESULTS_DIR, f"选股结果_{today}.csv")
+        
+        # ---【午夜幽灵修复】凌晨操作时自动尝试昨天的文件---
+        if not os.path.exists(csv_path):
+            yesterday = (datetime.date.today() - datetime.timedelta(days=1)).strftime('%Y%m%d')
+            yesterday_path = os.path.join(RESULTS_DIR, f"选股结果_{yesterday}.csv")
+            if os.path.exists(yesterday_path):
+                print(f"⚠️ 今天的文件不存在，自动使用昨天的文件")
+                csv_path = yesterday_path
+        # -----------------------------------------
     
     if not os.path.exists(csv_path):
         print(f"❌ 文件不存在: {csv_path}")
@@ -356,6 +367,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description='持仓管理')
     parser.add_argument('--check', action='store_true', help='每日巡检')
+    parser.add_argument('--push', action='store_true', help='巡检时推送预警到手机')
     parser.add_argument('--list', action='store_true', help='列出持仓')
     parser.add_argument('--add', type=str, help='添加持仓: 代码,名称,买入价 (例: 600000,浦发银行,10.5)')
     parser.add_argument('--remove', type=str, help='移除持仓（不归档）: 代码')
@@ -366,7 +378,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     if args.check:
-        daily_check()
+        alerts = daily_check()
+        # 如果有预警且指定了推送
+        if args.push and alerts:
+            try:
+                from src.notifier import notify_position_alert
+                notify_position_alert(alerts)
+                print("\n📱 预警已推送到手机")
+            except Exception as e:
+                print(f"\n⚠️ 推送失败: {e}")
+                print("   请检查 config/settings.py 中的 NOTIFY 配置")
     elif args.list:
         list_holdings()
     elif args.add:
