@@ -1,6 +1,9 @@
 # AlphaHunter - 尾盘低吸量化交易系统
 # 依赖包列表
 
+# 环境变量
+python-dotenv>=1.0.0
+
 # 数据获取
 akshare>=1.12.0
 

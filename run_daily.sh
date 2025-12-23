@@ -7,6 +7,14 @@
 BASEDIR=$(dirname "$0")
 cd "$BASEDIR"
 
+# 激活虚拟环境
+if [ -d ".venv" ]; then
+    source .venv/bin/activate
+else
+    echo "❌ 错误: 虚拟环境不存在，请先运行 'python3 -m venv .venv && pip install -r requirements.txt'"
+    exit 1
+fi
+
 echo "=========================================="
 echo "🚀 AlphaHunter 一键启动程序 (收盘任务)"
 echo "=========================================="
