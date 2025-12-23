@@ -1,0 +1,131 @@
+"""
+AlphaHunter - 尾盘低吸选股系统
+配置文件
+"""
+
+# ============================================
+# 基础路径配置
+# ============================================
+import os
+
+# 项目根目录
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# 数据目录
+DATA_DIR = os.path.join(BASE_DIR, "data")
+RPS_DATA_DIR = os.path.join(DATA_DIR, "rps")
+HISTORY_DATA_DIR = os.path.join(DATA_DIR, "history")
+
+# 输出目录
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+RESULTS_DIR = os.path.join(OUTPUT_DIR, "results")
+BACKTEST_DIR = os.path.join(OUTPUT_DIR, "backtest")
+
+# 确保目录存在
+for dir_path in [RPS_DATA_DIR, HISTORY_DATA_DIR, RESULTS_DIR, BACKTEST_DIR]:
+    os.makedirs(dir_path, exist_ok=True)
+
+
+# ============================================
+# 策略参数配置
+# ============================================
+STRATEGY = {
+    # 涨跌幅筛选 (小阳线)
+    'pct_change_min': 0.3,      # 最小涨幅 %
+    'pct_change_max': 4.0,      # 最大涨幅 %
+    
+    # 换手率筛选 (流动性)  
+    'turnover_min': 5.0,        # 最小换手率 %
+    'turnover_max': 20.0,       # 最大换手率 %
+    
+    # 量比筛选 (人气)
+    'volume_ratio_min': 0.8,    # 最小量比
+    
+    # 振幅筛选 (波动小)
+    'amplitude_max': 0.05,      # 最大振幅 5%
+    
+    # MA5 乖离率 (紧紧相连)
+    'ma5_bias_max': 0.02,       # 与MA5乖离率不超过 2%
+    
+    # RPS 筛选
+    'rps_min': 40,              # 最低 RPS 评分
+    'rps_window': 120,          # RPS 计算周期（天）
+}
+
+
+# ============================================
+# 回测参数配置
+# ============================================
+BACKTEST = {
+    'start_date': '20240101',   # 回测开始日期
+    'end_date': '20241220',     # 回测结束日期
+    'commission': 0.0003,       # 佣金 0.03%
+    'stamp_duty': 0.001,        # 印花税 0.1%
+    'sample_size': 500,         # 抽样股票数量
+}
+
+
+# ============================================
+# 消息推送配置 (请填入你的配置)
+# ============================================
+NOTIFY = {
+    # 钉钉机器人
+    'dingtalk_webhook': '',     # 钉钉 Webhook URL
+    'dingtalk_secret': '',      # 钉钉加签密钥
+    
+    # 企业微信机器人
+    'wechat_webhook': '',       # 企业微信 Webhook URL
+    
+    # Server酱 (微信推送)
+    'serverchan_key': '',       # Server酱 SendKey
+}
+
+
+# ============================================
+# 定时任务配置
+# ============================================
+SCHEDULER = {
+    'update_rps_time': '17:00',     # RPS 更新时间
+    'scan_time_1': '14:35',         # 第一次扫描
+    'scan_time_2': '14:50',         # 第二次扫描（临近收盘）
+}
+
+
+# ============================================
+# 并发配置
+# ============================================
+CONCURRENT = {
+    'max_workers': 10,          # 最大并发线程数
+}
+
+
+# ============================================
+# 黑名单配置 (从外部文件读取)
+# ============================================
+def load_blacklist():
+    """从 blacklist.txt 读取黑名单"""
+    blacklist_file = os.path.join(os.path.dirname(__file__), 'blacklist.txt')
+    blacklist = []
+    
+    if os.path.exists(blacklist_file):
+        with open(blacklist_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # 跳过空行和注释
+                if line and not line.startswith('#'):
+                    # 取代码部分（忽略后面的注释）
+                    code = line.split()[0] if line.split() else line
+                    if code:
+                        blacklist.append(code)
+    
+    return blacklist
+
+BLACKLIST = load_blacklist()
+
+
+# ============================================
+# 风控配置
+# ============================================
+RISK_CONTROL = {
+    'market_drop_threshold': -1.5,  # 大盘跌幅阈值（超过此值给出警告）
+}
