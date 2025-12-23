@@ -118,29 +118,51 @@ def run_scan():
     max_workers = CONCURRENT.get('max_workers', 10)
     
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        # 准备数据字典，方便线程中使用
+        stock_data_map = {}
+        for _, row in candidates.iterrows():
+            stock_data_map[row['代码']] = {
+                'name': row['名称'],
+                'current_close': row['最新价'],
+                'pct_change': row['涨跌幅'],
+                'turnover': row['换手率'],
+                'volume_ratio': row['量比'],
+                'amplitude': row['振幅']
+            }
+
         future_to_stock = {
-            executor.submit(get_stock_history, code, period='daily'): (code, name, close) 
-            for code, name, close in zip(codes, names, closes)
+            executor.submit(get_stock_history, code): code 
+            for code in stock_data_map.keys()
         }
         
         for future in as_completed(future_to_stock):
-            code, name, current_close = future_to_stock[future]
+            code = future_to_stock[future]
             try:
                 hist = future.result()
                 if hist is not None and len(hist) >= 5:
+                    data = stock_data_map[code]
+                    
                     # 计算 RPS (如果存在)
                     rps_score = 0
                     if has_rps:
-                        rps_row = rps_df[rps_df['代码'] == code]
+                        rps_row = rps_df[rps_df['symbol'] == code]
                         if not rps_row.empty:
-                            rps_score = rps_row.iloc[0]['RPS']
+                            rps_score = rps_row.iloc[0]['rps']
                     
-                    # 准备生成信号所需数据
-                    # hist 包含历史记录，但不包含今天的最新价，手动合并
+                    # 提取前一天数据 (hist 的最后一行通常是前一个交易日)
+                    prev_day = hist.iloc[-1]
+                    prev_close = prev_day['收盘']
+                    prev_open = prev_day['开盘']
+                    prev_pct = prev_day['涨跌幅']
+                    
                     hist_closes = hist['收盘'].tolist()
                     
                     # 调用通用信号生成函数
-                    strategy_result = generate_signal(code, name, current_close, hist_closes, rps_score)
+                    strategy_result = generate_signal(
+                        code, data['name'], data['current_close'], 
+                        data['pct_change'], data['turnover'], data['volume_ratio'], data['amplitude'],
+                        hist_closes, prev_close, prev_open, prev_pct, rps_score
+                    )
                     
                     if strategy_result:
                         signals.append(strategy_result)
@@ -167,7 +189,7 @@ def run_scan():
     logger.info("-" * 60)
     
     # 打印前 5 只（或者全部）
-    print_df = results_df.head(10)[['代码', '名称', '最新价', 'RPS', '策略']]
+    print_df = results_df.head(10)[['代码', '名称', '现价', 'RPS', '分类']]
     logger.info(print_df.to_string(index=False))
     logger.info("=" * 60)
     

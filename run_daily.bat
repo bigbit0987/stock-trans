@@ -1,4 +1,6 @@
 @echo off
+:: 切换代码页为 UTF-8 防止中文乱码
+chcp 65001 >nul
 setlocal
 cd /d %~dp0
 

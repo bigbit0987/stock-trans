@@ -20,13 +20,18 @@ TASKS = {
         'time': SCHEDULER['update_rps_time'],
         'description': '更新 RPS 数据'
     },
+    'check': {
+        'command': ['check', '--push'],
+        'time': '14:30',
+        'description': '持仓巡检'
+    },
     'scan_1': {
-        'command': ['scan'],
+        'command': ['scan', '--push'],
         'time': SCHEDULER['scan_time_1'],
         'description': '尾盘扫描 (第一次)'
     },
     'scan_2': {
-        'command': ['scan'],
+        'command': ['scan', '--push'],
         'time': SCHEDULER['scan_time_2'],
         'description': '尾盘扫描 (第二次)'
     }
