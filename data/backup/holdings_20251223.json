@@ -1,0 +1,74 @@
+{
+  "301183": {
+    "name": "东田微",
+    "buy_price": 169.25,
+    "buy_date": "2025-12-23",
+    "quantity": 0,
+    "strategy": "RPS_CORE",
+    "note": ""
+  },
+  "300346": {
+    "name": "南大光电",
+    "buy_price": 46.25,
+    "buy_date": "2025-12-23",
+    "quantity": 0,
+    "strategy": "POTENTIAL",
+    "note": ""
+  },
+  "000533": {
+    "name": "顺钠股份",
+    "buy_price": 8.73,
+    "buy_date": "2025-12-23",
+    "quantity": 0,
+    "strategy": "STABLE",
+    "note": ""
+  },
+  "301252": {
+    "name": "同星科技",
+    "buy_price": 28.03,
+    "buy_date": "2025-12-23",
+    "quantity": 0,
+    "strategy": "STABLE",
+    "note": ""
+  },
+  "300576": {
+    "name": "容大感光",
+    "buy_price": 41.02,
+    "buy_date": "2025-12-23",
+    "quantity": 0,
+    "strategy": "STABLE",
+    "note": ""
+  },
+  "603382": {
+    "name": "海阳科技",
+    "buy_price": 32.81,
+    "buy_date": "2025-12-23",
+    "quantity": 0,
+    "strategy": "STABLE",
+    "note": ""
+  },
+  "001233": {
+    "name": "海安集团",
+    "buy_price": 59.96,
+    "buy_date": "2025-12-23",
+    "quantity": 0,
+    "strategy": "STABLE",
+    "note": ""
+  },
+  "301584": {
+    "name": "建发致新",
+    "buy_price": 32.5,
+    "buy_date": "2025-12-23",
+    "quantity": 0,
+    "strategy": "STABLE",
+    "note": ""
+  },
+  "002510": {
+    "name": "天汽模",
+    "buy_price": 7.26,
+    "buy_date": "2025-12-23",
+    "quantity": 0,
+    "strategy": "STABLE",
+    "note": ""
+  }
+}

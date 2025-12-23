@@ -73,12 +73,34 @@ def check_premarket():
         print("\n📭 当前无持仓")
         return []
     
-    print(f"\n当前持仓: {len(holdings)} 只\n")
+    print(f"\n当前持仓: {len(holdings)} 只")
     
     # 获取行情数据
     df = get_premarket_data()
     if df is None:
         return []
+    
+    # ---【大盘滤网】获取上证指数情况---
+    market_gap = 0
+    market_status = "未知"
+    try:
+        index_df = ak.stock_zh_index_spot_em()
+        sh_idx = index_df[index_df['代码'] == '000001']
+        if not sh_idx.empty:
+            market_gap = sh_idx.iloc[0]['涨跌幅']
+            if market_gap <= -2:
+                market_status = "🔴 系统性暴跌！情绪杀，不要恐慌抛售"
+            elif market_gap <= -1:
+                market_status = "🟡 大盘低开，观察开盘承接力度"
+            elif market_gap >= 1:
+                market_status = "🟢 大盘高开，情绪向好"
+            else:
+                market_status = "⚪ 大盘平开"
+    except:
+        pass
+    
+    print(f"\n📊 大盘情况: 上证 {market_gap:+.2f}% {market_status}")
+    print("-" * 60)
     
     alerts = []
     

@@ -30,11 +30,55 @@ def load_holdings() -> dict:
     return {}
 
 
+# 备份目录
+BACKUP_DIR = os.path.join(PROJECT_ROOT, "data", "backup")
+
+
+def backup_data():
+    """备份重要数据文件"""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    today = datetime.date.today().strftime('%Y%m%d')
+    
+    import shutil
+    
+    # 备份 holdings.json
+    if os.path.exists(HOLDINGS_FILE):
+        backup_holdings = os.path.join(BACKUP_DIR, f"holdings_{today}.json")
+        shutil.copy2(HOLDINGS_FILE, backup_holdings)
+    
+    # 备份 trade_history.csv
+    history_file = os.path.join(PROJECT_ROOT, "data", "trade_history.csv")
+    if os.path.exists(history_file):
+        backup_history = os.path.join(BACKUP_DIR, f"trade_history_{today}.csv")
+        shutil.copy2(history_file, backup_history)
+    
+    # 只保留最近30天的备份
+    try:
+        files = os.listdir(BACKUP_DIR)
+        files.sort()
+        # 如果备份超过60个文件(约30天的holdings+history)，删除最旧的
+        while len(files) > 60:
+            oldest = files.pop(0)
+            os.remove(os.path.join(BACKUP_DIR, oldest))
+    except:
+        pass
+
+
 def save_holdings(holdings: dict):
-    """保存持仓数据"""
+    """保存持仓数据（自动备份）"""
     os.makedirs(os.path.dirname(HOLDINGS_FILE), exist_ok=True)
     with open(HOLDINGS_FILE, 'w', encoding='utf-8') as f:
         json.dump(holdings, f, ensure_ascii=False, indent=2)
+    
+    # 自动备份 (每天只备份一次)
+    today = datetime.date.today().strftime('%Y%m%d')
+    backup_marker = os.path.join(BACKUP_DIR, f".backup_{today}")
+    if not os.path.exists(backup_marker):
+        backup_data()
+        # 创建备份标记文件
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        with open(backup_marker, 'w') as f:
+            f.write(datetime.datetime.now().isoformat())
 
 
 def add_position(
