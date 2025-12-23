@@ -155,6 +155,22 @@ def cmd_history(args):
     print_summary(df)
 
 
+def cmd_cache(args):
+    """缓存管理"""
+    from src.cache_manager import cache_manager
+    
+    if args.action == 'status':
+        stats = cache_manager.get_cache_stats()
+        logger.info("📦 缓存状态:")
+        logger.info(f"   历史数据缓存: {stats['history_cached']} 只")
+        logger.info(f"   动量缓存: {stats['momentum_cached']} 只")
+        logger.info(f"   缓存大小: {stats['cache_size_mb']} MB")
+        logger.info(f"   缓存日期: {stats['cache_date'] or '无'}")
+    elif args.action == 'clean':
+        cache_manager.cleanup_old_cache(max_days=1)
+        logger.info("🧹 缓存清理完成")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="🚀 AlphaHunter - 尾盘低吸量化交易系统",
@@ -210,6 +226,10 @@ def main():
     subparsers.add_parser("list", help="📋 查看当前所有持仓")
     subparsers.add_parser("history", help="📜 查看完整交易历史")
     
+    # 缓存管理
+    cache_parser = subparsers.add_parser("cache", help="📦 缓存管理")
+    cache_parser.add_argument("action", choices=["status", "clean"], help="操作: status=查看状态, clean=清理缓存")
+    
     imp_parser = subparsers.add_parser("import", help="📥 从选股结果导入持仓")
     imp_parser.add_argument("file", nargs="?", help="指定的 CSV 路径")
 
@@ -237,6 +257,7 @@ def main():
         "import": cmd_import,
         "list": cmd_list,
         "history": cmd_history,
+        "cache": cmd_cache,
     }
     
     if args.command in cmd_map:

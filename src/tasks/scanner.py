@@ -17,7 +17,7 @@ sys.path.insert(0, PROJECT_ROOT)
 import akshare as ak
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from config import STRATEGY, RESULTS_DIR, CONCURRENT, RISK_CONTROL, RPS_DATA_DIR, CAPITAL
-from src.data_loader import get_realtime_quotes, load_latest_rps, get_stock_history
+from src.data_loader import get_realtime_quotes, load_latest_rps, get_stock_history, get_cache_stats
 from src.strategy import filter_by_basic_conditions, generate_signal
 from src.utils import logger
 
@@ -75,6 +75,13 @@ def run_scan():
     logger.info("🚀 尾盘选股扫描启动")
     logger.info(f"   时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
+    
+    # 显示缓存状态
+    try:
+        cache_stats = get_cache_stats()
+        logger.info(f"\n📦 缓存状态: 历史数据 {cache_stats['history_cached']} 只, 动量 {cache_stats['momentum_cached']} 只")
+    except:
+        pass
     
     # 检查是否周末
     weekday = datetime.datetime.today().weekday()

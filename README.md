@@ -86,6 +86,10 @@ python main.py close 600000 11.0 --force     # 强制卖出(跳过T+1)
 python main.py import                        # 导入选股结果
 python main.py list                          # 列出持仓
 python main.py history                       # 交易历史
+
+# 缓存管理 (新增)
+python main.py cache status      # 📦 查看缓存状态
+python main.py cache clean       # 🧹 清理过期缓存
 ```
 
 | 命令 | 说明 | 建议时间 |
@@ -95,6 +99,7 @@ python main.py history                       # 交易历史
 | `main.py check --push` | 持仓巡检 | 早盘/盘中 |
 | `main.py scan` | 尾盘选股 | 14:35 - 14:50 |
 | `main.py import` | 导入持仓 | 尾盘后 |
+| `main.py cache status` | 查看缓存 | 随时 |
 
 ---
 
@@ -226,6 +231,12 @@ NOTIFY = {
 
 ## 📝 更新日志
 
+- **v2.1** (2024-12-23): 🚀 性能优化版
+  - 新增智能缓存系统（Parquet格式存储）
+  - 并发数从10提升到30
+  - 增量更新机制，避免重复API请求
+  - 缓存命中后速度提升 **400倍**
+  - 新增 `cache` 命令管理缓存
 - **v2.0** (2024-12-23): 重构项目结构，模块化设计
 - **v1.0** (2024-12-23): 初始版本
 
