@@ -177,6 +177,28 @@ def cmd_virtual(args):
                 logger.error(f"推送失败: {e}")
 
 
+def cmd_market(args):
+    """查看大盘状态和热门板块"""
+    from src.factors import print_market_condition, get_hot_sectors
+    
+    # 显示大盘状态
+    print_market_condition()
+    
+    # 显示热门板块
+    if args.sectors:
+        logger.info("\n")
+        logger.info("=" * 60)
+        logger.info("🔥 今日热门板块 TOP 10")
+        logger.info("=" * 60)
+        
+        hot_sectors = get_hot_sectors(10)
+        for s in hot_sectors:
+            emoji = "🟢" if s['change'] > 0 else "🔴"
+            logger.info(f"   {s['rank']:2d}. {s['name']:<10} {emoji} {s['change']:+.2f}%")
+        
+        logger.info("=" * 60)
+
+
 def cmd_add(args):
     """添加持仓"""
     from src.tasks.portfolio import add_position
@@ -368,8 +390,13 @@ def main():
     virtual_parser.add_argument("--stats", action="store_true", help="查看统计报告")
     virtual_parser.add_argument("--clear", action="store_true", help="清空虚拟持仓")
     
+    # 大盘风控查看
+    market_parser = subparsers.add_parser("market", help="📊 大盘风控与热门板块")
+    market_parser.add_argument("--sectors", action="store_true", help="显示热门板块")
+    
     # 每日自动任务 (供 launchd/cron 调用)
     subparsers.add_parser("daily", help="🤖 每日自动任务 (定时任务专用)")
+
 
 
 
@@ -402,6 +429,7 @@ def main():
         "monitor": cmd_monitor,
         "performance": cmd_performance,
         "virtual": cmd_virtual,
+        "market": cmd_market,
     }
     
     if args.command in cmd_map:

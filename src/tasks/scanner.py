@@ -72,7 +72,7 @@ def check_market_risk(realtime_df: pd.DataFrame = None) -> tuple:
 def run_scan():
     """运行尾盘扫描"""
     logger.info("=" * 60)
-    logger.info("🚀 尾盘选股扫描启动")
+    logger.info("🚀 尾盘选股扫描启动 (多因子增强版 v2.3)")
     logger.info(f"   时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     logger.info("=" * 60)
     
@@ -88,11 +88,63 @@ def run_scan():
     if weekday >= 5:
         logger.warning("\n⚠️ 警告：今天是周末，A股不开市，数据可能未更新！")
     
+    # =========================================
+    # 大盘风控检查 (增强版)
+    # =========================================
+    try:
+        from config import MARKET_RISK_CONTROL
+        from src.factors import get_market_condition, print_market_condition
+        
+        if MARKET_RISK_CONTROL.get('enabled', True):
+            market_cond = print_market_condition()
+            
+            # 检查是否应该停止交易
+            is_risky = not market_cond['safe']
+            
+            # 获取风控配置
+            risk_config = MARKET_RISK_CONTROL
+            sleep_mode = risk_config.get('sleep_mode', {})
+            
+            if is_risky and risk_config.get('enabled', True):
+                # 检查是否触发休眠模式
+                if sleep_mode.get('enabled', False):
+                    trigger = sleep_mode.get('trigger', 'below_ma20')
+                    should_sleep = False
+                    reason = ""
+                    
+                    if trigger == 'below_ma20' and not market_cond.get('above_ma20', True):
+                        should_sleep = True
+                        reason = "大盘跌破20日均线 (空头趋势)"
+                    elif market_cond.get('index_change', 0) < risk_config.get('index_drop_threshold', -2.0):
+                        should_sleep = True
+                        reason = f"大盘暴跌 ({market_cond.get('index_change'):.2f}%)"
+                    
+                    if should_sleep:
+                        msg = f"🛑 触发休眠模式: {reason}"
+                        logger.warning(f"\n{msg}")
+                        
+                        if sleep_mode.get('notify_on_sleep', True):
+                             from src.notifier import notify_all
+                             notify_all("系统进入休眠模式 💤", f"触发条件: {reason}\n\n建议: 市场风险较高，系统已暂停选股，建议空仓观望。")
+                        
+                        return []
+
+                # 旧版兼容逻辑
+                action = risk_config.get('below_ma20_action', 'warn')
+                if action == 'stop':
+                    logger.warning("\n🛑 大盘风控触发，今日停止选股！")
+                    return []
+                elif action == 'warn':
+                    logger.warning("\n⚠️ 大盘风控警告，建议谨慎操作！")
+    except Exception as e:
+        logger.warning(f"大盘风控检查失败: {e}")
+    # =========================================
+    
     # 获取实时行情 (先获取，用于风控和筛选)
     df = get_realtime_quotes()
     
-    # 检查大盘风险 (复用已获取的数据)
-    logger.info("\n📊 检查大盘状态...")
+    # 检查大盘风险 (复用已获取的数据) - 简化版检查
+    logger.info("\n📊 检查市场情绪...")
     is_safe, sh_pct, sentiment = check_market_risk(df)
     if not is_safe:
         logger.warning("\n⚠️ 市场风险较高，建议今日观望！")
@@ -211,11 +263,100 @@ def run_scan():
     # 排序和输出结果
     if not signals:
         logger.info("\n❌ 今日未发现推荐买入标的")
-        return
+        return []
+    
+    # =========================================
+    # 多因子评分 (v2.3 新增)
+    # =========================================
+    try:
+        from config import MULTI_FACTOR
+        from src.factors import batch_calculate_scores, get_hot_sectors
         
-    # 按 RPS 强度排序
+        if MULTI_FACTOR.get('enabled', True):
+            logger.info("\n📊 第三轮筛选: 多因子综合评分...")
+            
+            # 显示热门板块
+            hot_sectors = get_hot_sectors(5)
+            if hot_sectors:
+                logger.info(f"   🔥 今日热门板块: {', '.join([s['name'] for s in hot_sectors])}")
+            
+            # 计算多因子评分
+            scored_signals = batch_calculate_scores(signals)
+            
+            # 按综合得分过滤和排序
+            min_score = MULTI_FACTOR.get('min_total_score', 60)
+            scored_signals = [s for s in scored_signals if s.get('total_score', 0) >= min_score]
+            
+            if scored_signals:
+                signals = scored_signals
+                logger.info(f"   ✅ 多因子筛选后: {len(signals)} 只 (综合评分 ≥ {min_score})")
+            else:
+                logger.warning(f"   ⚠️ 多因子筛选后无符合条件股票 (最低要求: {min_score}分)")
+    except Exception as e:
+        logger.warning(f"多因子评分失败，使用原始排序: {e}")
+    
+    # =========================================
+    # 板块滤网 (v2.3.1 新增)
+    # =========================================
+    try:
+        from config import SECTOR_FILTER
+        from src.indicators import is_sector_strong
+        from src.factors import get_hot_sectors, get_stock_sector
+        
+        if SECTOR_FILTER.get('enabled', True):
+            top_pct = SECTOR_FILTER.get('top_pct', 0.33)
+            all_sectors = get_hot_sectors(100)  # 获取所有板块排名
+            
+            before_count = len(signals)
+            filtered_signals = []
+            
+            for s in signals:
+                code = s.get('代码', '')
+                sector = get_stock_sector(code)
+                if sector and is_sector_strong(sector, all_sectors, top_pct):
+                    filtered_signals.append(s)
+                elif s.get('grade') == 'A':
+                    # A级股票不受板块限制
+                    filtered_signals.append(s)
+            
+            if filtered_signals:
+                signals = filtered_signals
+                logger.info(f"   🔍 板块滤网: 保留 {len(signals)} 只 (板块排名前{int(top_pct*100)}%)")
+    except Exception as e:
+        logger.warning(f"板块滤网失败: {e}")
+    
+    # =========================================
+    # 凯利公式仓位计算 (v2.3.1 新增)
+    # =========================================
+    try:
+        from config import KELLY_POSITION
+        from src.indicators import calculate_dynamic_position_size
+        
+        if KELLY_POSITION.get('enabled', True):
+            base_amount = KELLY_POSITION.get('base_amount', 50000)
+            kelly_result = calculate_dynamic_position_size(base_amount)
+            
+            logger.info(f"\n💰 凯利公式仓位建议:")
+            logger.info(f"   历史胜率: {kelly_result['win_rate']*100:.1f}%")
+            logger.info(f"   建议金额: {kelly_result['suggested_amount']:.0f} 元 ({kelly_result['adjustment']})")
+            
+            # 为每只股票更新建议买入金额
+            for s in signals:
+                current_price = s.get('现价', 0)
+                if current_price > 0:
+                    suggested_vol = int(kelly_result['suggested_amount'] / current_price / 100) * 100
+                    s['建议买入'] = f"{suggested_vol} 股"
+                    s['建议金额'] = kelly_result['suggested_amount']
+    except Exception as e:
+        logger.warning(f"凯利公式计算失败: {e}")
+    # =========================================
+        
+    # 按综合得分或RPS排序
     results_df = pd.DataFrame(signals)
-    results_df = results_df.sort_values(by='RPS', ascending=False)
+    if 'total_score' in results_df.columns:
+        results_df = results_df.sort_values(by='total_score', ascending=False)
+    else:
+        results_df = results_df.sort_values(by='RPS', ascending=False)
     
     # 保存结果
     today = datetime.datetime.now().strftime('%Y%m%d')
@@ -227,11 +368,19 @@ def run_scan():
     logger.info(f"📄 结果已保存至: {output_path}")
     logger.info("-" * 60)
     
-    # 打印前 10 只
-    cols = ['代码', '名称', '现价', 'RPS', '分类']
+    # 打印结果 (根据是否有多因子评分选择显示列)
+    if 'total_score' in results_df.columns:
+        cols = ['代码', '名称', '现价', 'total_score', 'grade', '分类']
+        results_df = results_df.rename(columns={'total_score': '综合评分', 'grade': '评级'})
+        cols = ['代码', '名称', '现价', '综合评分', '评级', '分类']
+    else:
+        cols = ['代码', '名称', '现价', 'RPS', '分类']
+    
     if '建议买入' in results_df.columns:
         cols.append('建议买入')
-    print_df = results_df.head(10)[cols]
+    
+    available_cols = [c for c in cols if c in results_df.columns]
+    print_df = results_df.head(10)[available_cols]
     logger.info(print_df.to_string(index=False))
     logger.info("=" * 60)
     

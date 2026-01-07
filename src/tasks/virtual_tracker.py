@@ -111,10 +111,10 @@ def add_recommendations_to_virtual(stocks: List[Dict]):
 
 def get_stock_technical_data(code: str) -> Optional[Dict]:
     """
-    获取股票技术指标数据
+    获取股票技术指标数据 (v2.3.1 增强版)
     
     Returns:
-        包含MA5, MA10, MA20, 当前价等技术数据
+        包含MA5, MA10, MA20, ATR, 当前价等技术数据
     """
     try:
         # 获取实时价格
@@ -126,7 +126,7 @@ def get_stock_technical_data(code: str) -> Optional[Dict]:
         current_price = stock.iloc[0]['最新价']
         pct_change = stock.iloc[0]['涨跌幅']
         
-        # 获取历史数据计算均线
+        # 获取历史数据计算均线和ATR
         hist = ak.stock_zh_a_hist(symbol=code, period="daily", adjust="qfq")
         if hist is None or len(hist) < 20:
             return None
@@ -141,11 +141,18 @@ def get_stock_technical_data(code: str) -> Optional[Dict]:
             return None
         
         closes = hist['收盘'].tolist()
+        highs = hist['最高'].tolist()
+        lows = hist['最低'].tolist()
         
         # 计算实时均线 (加入当前价)
         ma5 = (sum(closes[-4:]) + current_price) / 5
         ma10 = (sum(closes[-9:]) + current_price) / 10
         ma20 = (sum(closes[-19:]) + current_price) / 20
+        
+        # 计算ATR (v2.3.1 新增)
+        from src.indicators import calculate_atr
+        atr = calculate_atr(highs, lows, closes, period=14)
+        atr_pct = (atr / current_price * 100) if current_price > 0 else 0
         
         # 计算K线形态
         prev_close = closes[-1]
@@ -162,6 +169,8 @@ def get_stock_technical_data(code: str) -> Optional[Dict]:
             'ma5': ma5,
             'ma10': ma10,
             'ma20': ma20,
+            'atr': atr,                    # v2.3.1 新增
+            'atr_pct': round(atr_pct, 2),  # v2.3.1 新增
             'prev_close': prev_close,
             'is_above_ma5': current_price > ma5,
             'is_above_ma10': current_price > ma10,
@@ -183,12 +192,12 @@ def analyze_sell_signal(
     highest_price: float
 ) -> Optional[Dict]:
     """
-    分析卖出信号（结合多种技术指标）
+    分析卖出信号 (v2.3.1 增强版 - 含ATR止损)
     
     策略说明：
-    1. 趋势核心(RPS≥90): 跌破MA5止盈
-    2. 潜力股(RPS 75-89): 涨5%或跌破MA5
-    3. 稳健标的(RPS<75): 涨3%或跌破买入价
+    1. ATR动态止损：根据波动率自动调整止损位
+    2. 移动止盈：盈利后启动跟踪止损保护利润
+    3. 分类策略：不同RPS分类使用不同阈值
     
     Returns:
         卖出信号字典，无信号返回None
@@ -196,65 +205,116 @@ def analyze_sell_signal(
     current = tech_data['current_price']
     ma5 = tech_data['ma5']
     ma10 = tech_data['ma10']
+    atr = tech_data.get('atr', 0)
     
     pnl_pct = (current - buy_price) / buy_price * 100
     drawdown = (current - highest_price) / highest_price * 100 if highest_price > buy_price else 0
     
     signal = None
     
-    # 根据分类执行不同策略
-    if '趋势核心' in category:
-        # 趋势核心: 跌破MA5止盈/止损
-        if current < ma5 and pnl_pct > 0:
-            signal = {
-                'type': 'TAKE_PROFIT',
-                'reason': f'跌破MA5止盈 (MA5={ma5:.2f})',
-                'suggestion': '趋势走弱，建议获利了结'
-            }
-        elif current < ma5 and pnl_pct < 0:
-            signal = {
-                'type': 'STOP_LOSS',
-                'reason': f'跌破MA5止损 (MA5={ma5:.2f})',
-                'suggestion': '趋势破位，建议止损'
-            }
-        elif pnl_pct >= 10:
-            signal = {
-                'type': 'TAKE_PROFIT',
-                'reason': f'涨幅达10%',
-                'suggestion': '可以考虑减仓锁定利润'
-            }
+    # =========================================
+    # 1. ATR动态止损 (优先级最高)
+    # =========================================
+    try:
+        from config import STOP_LOSS_STRATEGY
+        stop_mode = STOP_LOSS_STRATEGY.get('mode', 'hybrid')
+        atr_multiplier = STOP_LOSS_STRATEGY.get('atr_multiplier', 2.0)
+        
+        if stop_mode in ['atr', 'hybrid'] and atr > 0:
+            # 计算ATR止损位
+            atr_stop = buy_price - atr * atr_multiplier
+            
+            if current < atr_stop:
+                signal = {
+                    'type': 'STOP_LOSS',
+                    'reason': f'触发ATR止损 (止损位={atr_stop:.2f}, 2倍ATR={atr*2:.2f})',
+                    'suggestion': '根据波动率止损，避免更大损失'
+                }
+    except:
+        pass
     
-    elif '潜力股' in category:
-        # 潜力股: 涨5%止盈 或 跌破MA5止损
-        if pnl_pct >= 5:
-            signal = {
-                'type': 'TAKE_PROFIT',
-                'reason': f'涨幅达5%',
-                'suggestion': '潜力股，建议卖出一半'
-            }
-        elif current < ma5 and pnl_pct < -2:
-            signal = {
-                'type': 'STOP_LOSS',
-                'reason': f'跌破MA5且亏损 (MA5={ma5:.2f})',
-                'suggestion': '走势转弱，建议离场'
-            }
+    # =========================================
+    # 2. 移动止盈 (Trailing Stop)
+    # =========================================
+    if signal is None:
+        try:
+            from config import STOP_LOSS_STRATEGY
+            trailing_cfg = STOP_LOSS_STRATEGY.get('trailing_stop', {})
+            
+            if trailing_cfg.get('enabled', True):
+                activation = trailing_cfg.get('activation_pct', 5.0)
+                callback = trailing_cfg.get('callback_pct', 3.0)
+                
+                max_pnl = (highest_price - buy_price) / buy_price * 100
+                
+                # 如果曾经盈利超过激活点，且现在回撤超过回调点
+                if max_pnl >= activation and drawdown < -callback:
+                    signal = {
+                        'type': 'TRAILING_STOP',
+                        'reason': f'移动止盈触发 (最高盈利{max_pnl:.1f}%, 回撤{drawdown:.1f}%)',
+                        'suggestion': f'利润回吐超{callback}%，锁定利润'
+                    }
+        except:
+            pass
     
-    else:  # 稳健标的
-        # 稳健标的: 涨3%走 或 跌3%止损
-        if pnl_pct >= 3:
-            signal = {
-                'type': 'TAKE_PROFIT',
-                'reason': f'涨幅达3%',
-                'suggestion': '稳健标的，落袋为安'
-            }
-        elif pnl_pct <= -3:
-            signal = {
-                'type': 'STOP_LOSS',
-                'reason': f'跌幅超3%',
-                'suggestion': '建议止损出局'
-            }
+    # =========================================
+    # 3. 分类策略 (基于RPS分类)
+    # =========================================
+    if signal is None:
+        if '趋势核心' in category:
+            # 趋势核心: 跌破MA5止盈/止损
+            if current < ma5 and pnl_pct > 0:
+                signal = {
+                    'type': 'TAKE_PROFIT',
+                    'reason': f'跌破MA5止盈 (MA5={ma5:.2f})',
+                    'suggestion': '趋势走弱，建议获利了结'
+                }
+            elif current < ma5 and pnl_pct < 0:
+                signal = {
+                    'type': 'STOP_LOSS',
+                    'reason': f'跌破MA5止损 (MA5={ma5:.2f})',
+                    'suggestion': '趋势破位，建议止损'
+                }
+            elif pnl_pct >= 10:
+                signal = {
+                    'type': 'TAKE_PROFIT',
+                    'reason': f'涨幅达10%',
+                    'suggestion': '可以考虑减仓锁定利润'
+                }
+        
+        elif '潜力股' in category:
+            # 潜力股: 涨5%止盈 或 跌破MA5止损
+            if pnl_pct >= 5:
+                signal = {
+                    'type': 'TAKE_PROFIT',
+                    'reason': f'涨幅达5%',
+                    'suggestion': '潜力股，建议卖出一半'
+                }
+            elif current < ma5 and pnl_pct < -2:
+                signal = {
+                    'type': 'STOP_LOSS',
+                    'reason': f'跌破MA5且亏损 (MA5={ma5:.2f})',
+                    'suggestion': '走势转弱，建议离场'
+                }
+        
+        else:  # 稳健标的
+            # 稳健标的: 涨3%走 或 跌3%止损
+            if pnl_pct >= 3:
+                signal = {
+                    'type': 'TAKE_PROFIT',
+                    'reason': f'涨幅达3%',
+                    'suggestion': '稳健标的，落袋为安'
+                }
+            elif pnl_pct <= -3:
+                signal = {
+                    'type': 'STOP_LOSS',
+                    'reason': f'跌幅超3%',
+                    'suggestion': '建议止损出局'
+                }
     
-    # 通用回撤保护 (浮盈超5%后回撤超3%)
+    # =========================================
+    # 4. 通用回撤保护 (兜底)
+    # =========================================
     if signal is None and highest_price > buy_price:
         max_pnl = (highest_price - buy_price) / buy_price * 100
         if max_pnl > 5 and drawdown < -3:
@@ -274,6 +334,7 @@ def analyze_sell_signal(
             'category': category,
             'ma5': ma5,
             'ma10': ma10,
+            'atr': atr,
         })
     
     return signal

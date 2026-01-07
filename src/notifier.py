@@ -87,36 +87,87 @@ def send_serverchan(title: str, content: str) -> bool:
 
 
 def format_stock_message(stocks: List[Dict]) -> str:
-    """格式化选股结果为消息"""
+    """格式化选股结果为消息 (v2.3 优化版)"""
     if not stocks:
         return "今日无符合条件的标的 😔"
     
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     lines = [f"📅 扫描时间: {now}\n"]
     
-    # 分类
-    core = [s for s in stocks if '趋势核心' in s.get('分类', '')]
-    potential = [s for s in stocks if '潜力股' in s.get('分类', '')]
-    stable = [s for s in stocks if '稳健标的' in s.get('分类', '')]
+    # 显示大盘环境 (如果有)
+    if stocks and 'market_multiplier' in stocks[0]:
+        multiplier = stocks[0]['market_multiplier']
+        if multiplier >= 1.0:
+            lines.append("📈 **大盘环境: 上升趋势** ✅\n")
+        elif multiplier >= 0.9:
+            lines.append("📊 **大盘环境: 震荡市** (评分×0.9)\n")
+        elif multiplier >= 0.7:
+            lines.append("⚠️ **大盘环境: 下降趋势** (评分×0.7)\n")
+        else:
+            lines.append("🚨 **大盘环境: 急跌** (评分×0.5)\n")
     
-    if core:
-        lines.append("### ⭐ 趋势核心\n")
-        for s in core:
-            lines.append(f"- **{s['代码']} {s['名称']}** | {s['现价']} | RPS:{s['RPS']}")
+    # 检查是否有多因子评分
+    has_score = 'total_score' in stocks[0] if stocks else False
     
-    if potential:
-        lines.append("\n### 🔥 潜力股\n")
-        for s in potential:
-            lines.append(f"- {s['代码']} {s['名称']} | {s['现价']} | RPS:{s['RPS']}")
+    # 检测诱多信号
+    traps = [s for s in stocks if s.get('is_trap', False)]
+    if traps:
+        lines.append("### ⚠️ 诱多警告\n")
+        for s in traps[:3]:
+            lines.append(f"- **{s['代码']} {s['名称']}** | RPS高但主力在出货！")
+        lines.append("")
     
-    if stable:
-        lines.append("\n### 📊 稳健标的\n")
-        for s in stable[:5]:
-            lines.append(f"- {s['代码']} {s['名称']} | {s['现价']}")
-        if len(stable) > 5:
-            lines.append(f"- ... 共 {len(stable)} 只")
+    # 按评级分类 (如果有多因子评分)
+    if has_score:
+        grade_a = [s for s in stocks if s.get('grade') == 'A' and not s.get('is_trap')]
+        grade_b = [s for s in stocks if s.get('grade') == 'B' and not s.get('is_trap')]
+        grade_c = [s for s in stocks if s.get('grade') == 'C' and not s.get('is_trap')]
+        
+        if grade_a:
+            lines.append("### 🏆 A级推荐 (≥80分)\n")
+            for s in grade_a[:5]:
+                lines.append(f"- **{s['代码']} {s['名称']}** | {s['现价']} | 评分:{s['total_score']} | {s.get('分类', '')}")
+        
+        if grade_b:
+            lines.append("\n### ⭐ B级推荐 (≥70分)\n")
+            for s in grade_b[:5]:
+                lines.append(f"- {s['代码']} {s['名称']} | {s['现价']} | 评分:{s['total_score']}")
+        
+        if grade_c:
+            lines.append("\n### 📊 C级标的 (≥60分)\n")
+            for s in grade_c[:3]:
+                lines.append(f"- {s['代码']} {s['名称']} | {s['现价']}")
+            if len(grade_c) > 3:
+                lines.append(f"- ... 共 {len(grade_c)} 只")
+    else:
+        # 旧版分类方式
+        core = [s for s in stocks if '趋势核心' in s.get('分类', '')]
+        potential = [s for s in stocks if '潜力股' in s.get('分类', '')]
+        stable = [s for s in stocks if '稳健标的' in s.get('分类', '')]
+        
+        if core:
+            lines.append("### ⭐ 趋势核心\n")
+            for s in core:
+                lines.append(f"- **{s['代码']} {s['名称']}** | {s['现价']} | RPS:{s['RPS']}")
+        
+        if potential:
+            lines.append("\n### 🔥 潜力股\n")
+            for s in potential:
+                lines.append(f"- {s['代码']} {s['名称']} | {s['现价']} | RPS:{s['RPS']}")
+        
+        if stable:
+            lines.append("\n### 📊 稳健标的\n")
+            for s in stable[:5]:
+                lines.append(f"- {s['代码']} {s['名称']} | {s['现价']}")
+            if len(stable) > 5:
+                lines.append(f"- ... 共 {len(stable)} 只")
     
-    lines.append(f"\n> 总计: {len(stocks)} 只")
+    # 过滤掉诱多的统计
+    valid_stocks = [s for s in stocks if not s.get('is_trap', False)]
+    lines.append(f"\n> 有效推荐: {len(valid_stocks)} 只")
+    if traps:
+        lines.append(f"> ⚠️ 排除诱多: {len(traps)} 只")
+    
     return "\n".join(lines)
 
 

@@ -74,20 +74,30 @@ python scan.py
 
 ```bash
 # 统一入口
-python main.py scan              # 🔍 尾盘选股
+python main.py scan              # 🔍 尾盘选股 (多因子增强版)
 python main.py check --push      # 📋 持仓巡检 + 推送
 python main.py premarket --push  # 📢 集合竞价预警 + 推送
 python main.py update            # 📊 更新RPS数据
 python main.py dashboard         # 📈 查看交易战绩
 python main.py backtest          # 📉 策略回测
 
-# 盘中实时监控 (新增 v2.2)
+# 大盘风控 (新增 v2.3)
+python main.py market            # 📊 查看大盘风控状态
+python main.py market --sectors  # 查看热门板块TOP10
+
+# 盘中实时监控 (v2.2)
 python main.py monitor           # 📡 持续监控(直到收盘)
 python main.py monitor --once    # 只检查一次
 python main.py monitor --duration 60  # 监控60分钟
 python main.py monitor --clear   # 清理提醒历史
 
-# 推荐效果统计 (新增 v2.2)
+# 虚拟持仓追踪 (新增 v2.3 策略验证)
+python main.py virtual           # 🧪 运行策略验证监控
+python main.py virtual --list    # 查看虚拟持仓
+python main.py virtual --stats   # 查看统计报告
+python main.py virtual --clear   # 清空重新开始
+
+# 推荐效果统计 (v2.2)
 python main.py performance       # 📊 查看推荐效果报告
 python main.py performance --update   # 更新追踪数据
 python main.py performance --push     # 推送周报
@@ -260,6 +270,33 @@ NOTIFY = {
 
 ## 📝 更新日志
 
+- **v2.3.1** (2026-01-07): 🧠 策略大师版
+  - **高级风控体系**
+    - 引入 **ATR 动态止损** (CTA 基金级风控)，告别固定止损被洗盘
+    - 新增 **休眠模式**：大盘跌破 20 日线自动停止选股，避开主跌浪
+    - 新增 **移动止盈**：盈利超 5%后开启回撤保护
+  - **资金管理系统**
+    - 引入 **凯利公式**：根据胜率动态计算最佳仓位
+    - 选股结果直接给出"建议买入股数"
+  - **板块强弱滤网**
+    - 只做全市场前 1/3 的强势板块
+    - 避免"由于板块拖累而补跌"的情况
+- **v2.3** (2026-01-07): 🎯 多因子策略版
+  - 新增 **多因子综合评分系统**
+    - 动量因子 (RPS) 30%
+    - 资金流向因子 25%
+    - 板块热度因子 25%
+    - 估值因子 10%
+    - 技术因子 10%
+  - 新增 **大盘风控模块** (`market` 命令)
+    - 指数均线判断趋势
+    - 熊市自动停止/警告
+    - 热门板块实时查看
+  - 新增 **虚拟持仓追踪** (`virtual` 命令)
+    - 自动将推荐加入虚拟持仓
+    - 结合均线自动判断卖点
+    - 自动统计胜率和收益
+  - 选股升级为三轮筛选：基础条件 → MA5 趋势 → **多因子评分**
 - **v2.2** (2026-01-07): 📡 智能监控版
   - 新增 `monitor` 盘中实时监控命令
     - 支持止盈提醒（涨幅达 3%/5%/10% 时钉钉通知）
