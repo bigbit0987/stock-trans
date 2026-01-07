@@ -584,13 +584,34 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
         except:
             pass
         
-        # --- 加权计算总分 ---
+        # --- 量能因子评分 (v2.4 新增) ---
+        volume_energy_score = 50  # 默认中性分
+        volume_features = []
+        try:
+            # 从传入的数据中获取量比
+            volume_ratio = s.get('量比', 1.0)
+            
+            # 简化版量能评分：基于量比
+            if volume_ratio >= 2.0:
+                volume_energy_score = 75
+                volume_features.append("放量")
+            elif volume_ratio >= 1.2:
+                volume_energy_score = 60
+                volume_features.append("温和放量")
+            elif volume_ratio <= 0.5:
+                volume_energy_score = 30
+                volume_features.append("缩量")
+        except:
+            pass
+        
+        # --- 加权计算总分 (v2.4 调整权重) ---
         raw_score = (
-            base_score * 0.30 +          # 动量 30%
+            base_score * 0.25 +          # 动量 25% (从30%降低)
             money_flow_score * 0.25 +    # 资金 25%
-            sector_score * 0.25 +        # 板块 25% (从20%提高)
-            valuation_score * 0.10 +     # 估值 10% (从15%降低)
-            50 * 0.10                    # 技术 10% (预留)
+            sector_score * 0.20 +        # 板块 20% (从25%降低)
+            valuation_score * 0.10 +     # 估值 10%
+            volume_energy_score * 0.10 + # 量能 10% (替代预留的技术因子)
+            50 * 0.10                    # 技术形态 10% (预留)
         )
         
         # --- 应用大盘折价系数 ---
@@ -624,6 +645,8 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
             'money_flow_score': round(money_flow_score, 1),
             'sector_score': round(sector_score, 1),
             'valuation_score': round(valuation_score, 1),
+            'volume_energy_score': round(volume_energy_score, 1),
+            'volume_features': volume_features,
             'market_multiplier': market_multiplier,
             'is_trap': is_trap,
             'grade': grade,

@@ -106,6 +106,199 @@ def is_near_ma(price: float, ma: float, threshold: float = 0.02) -> bool:
 
 
 # ============================================
+# 量能因子 - v2.4 新增
+# ============================================
+
+def detect_shrinking_volume_rise(volumes: List[float], closes: List[float], days: int = 3) -> Dict:
+    """
+    检测缩量上涨
+    
+    缩量上涨特征：
+    1. 价格连续上涨N天
+    2. 同期成交量逐步缩小
+    3. 这是主力高度控盘的信号
+    
+    Args:
+        volumes: 成交量序列
+        closes: 收盘价序列
+        days: 检测天数
+    
+    Returns:
+        {
+            'detected': bool,      # 是否检测到
+            'price_change': float, # 期间涨幅
+            'volume_change': float,# 量能变化率
+            'score': float         # 评分 (0-100)
+        }
+    """
+    if len(volumes) < days + 1 or len(closes) < days + 1:
+        return {'detected': False, 'price_change': 0, 'volume_change': 0, 'score': 50}
+    
+    recent_volumes = volumes[-days:]
+    recent_closes = closes[-days:]
+    prev_close = closes[-(days+1)]
+    
+    # 检查价格是否连续上涨
+    price_rising = all(recent_closes[i] >= recent_closes[i-1] for i in range(1, len(recent_closes)))
+    if not price_rising:
+        return {'detected': False, 'price_change': 0, 'volume_change': 0, 'score': 50}
+    
+    # 计算涨幅
+    price_change = (recent_closes[-1] - prev_close) / prev_close * 100
+    
+    # 检查成交量是否缩小
+    avg_recent = sum(recent_volumes) / len(recent_volumes)
+    avg_prev = sum(volumes[-(days*2):-days]) / days if len(volumes) >= days * 2 else avg_recent
+    volume_change = (avg_recent - avg_prev) / avg_prev * 100 if avg_prev > 0 else 0
+    
+    # 缩量上涨判定: 涨幅>0 且 量能减少
+    detected = price_change > 0 and volume_change < -10
+    
+    # 评分: 缩量越明显，评分越高
+    score = 50
+    if detected:
+        score = min(100, 70 + abs(volume_change) / 2)
+    
+    return {
+        'detected': detected,
+        'price_change': round(price_change, 2),
+        'volume_change': round(volume_change, 2),
+        'score': round(score, 1)
+    }
+
+
+def detect_volume_price_divergence(volumes: List[float], closes: List[float], days: int = 5) -> Dict:
+    """
+    检测量价背离
+    
+    顶背离: 价格创新高，成交量不创新高 -> 警告信号
+    底背离: 价格创新低，成交量不创新低 -> 可能反转信号
+    
+    Args:
+        volumes: 成交量序列
+        closes: 收盘价序列
+        days: 检测周期
+    
+    Returns:
+        {
+            'type': str,           # 'top_divergence', 'bottom_divergence', 'none'
+            'signal': str,         # 信号描述
+            'score': float         # 评分调整 (-20 to +20)
+        }
+    """
+    if len(volumes) < days * 2 or len(closes) < days * 2:
+        return {'type': 'none', 'signal': '', 'score': 0}
+    
+    recent_closes = closes[-days:]
+    prev_closes = closes[-(days*2):-days]
+    recent_volumes = volumes[-days:]
+    prev_volumes = volumes[-(days*2):-days]
+    
+    current_high = max(recent_closes)
+    prev_high = max(prev_closes)
+    current_vol_high = max(recent_volumes)
+    prev_vol_high = max(prev_volumes)
+    
+    current_low = min(recent_closes)
+    prev_low = min(prev_closes)
+    current_vol_low = min(recent_volumes)
+    prev_vol_low = min(prev_volumes)
+    
+    # 顶背离检测
+    if current_high > prev_high and current_vol_high < prev_vol_high * 0.9:
+        return {
+            'type': 'top_divergence',
+            'signal': '⚠️ 量价顶背离，注意风险',
+            'score': -15
+        }
+    
+    # 底背离检测
+    if current_low < prev_low and current_vol_low > prev_vol_low * 0.9:
+        return {
+            'type': 'bottom_divergence',
+            'signal': '💡 量价底背离，可能反转',
+            'score': 10
+        }
+    
+    return {'type': 'none', 'signal': '', 'score': 0}
+
+
+def calculate_volume_energy_score(
+    volumes: List[float], 
+    closes: List[float],
+    current_volume_ratio: float = 1.0
+) -> Dict:
+    """
+    计算量能综合评分 (v2.4)
+    
+    评分维度:
+    1. 量比 (当日成交量 vs 5日均量)
+    2. 缩量上涨检测
+    3. 量价背离检测
+    4. 放量突破检测
+    
+    Returns:
+        {
+            'score': float,          # 综合评分 (0-100)
+            'features': List[str],   # 特征标签
+            'signals': List[str]     # 信号提示
+        }
+    """
+    score = 50  # 基础分
+    features = []
+    signals = []
+    
+    # 1. 量比评分
+    if current_volume_ratio >= 2.0:
+        score += 15
+        features.append("放量")
+        if current_volume_ratio >= 3.0:
+            signals.append("成交活跃度高")
+    elif current_volume_ratio >= 1.2:
+        score += 5
+        features.append("温和放量")
+    elif current_volume_ratio <= 0.5:
+        score -= 10
+        features.append("极度缩量")
+    
+    # 2. 缩量上涨检测
+    shrink = detect_shrinking_volume_rise(volumes, closes)
+    if shrink['detected']:
+        score += 15
+        features.append("缩量上涨")
+        signals.append("主力控盘良好")
+    
+    # 3. 量价背离检测
+    divergence = detect_volume_price_divergence(volumes, closes)
+    score += divergence['score']
+    if divergence['signal']:
+        signals.append(divergence['signal'])
+        if divergence['type'] == 'top_divergence':
+            features.append("顶背离")
+        elif divergence['type'] == 'bottom_divergence':
+            features.append("底背离")
+    
+    # 4. 放量突破检测 (近3日成交量是否显著放大)
+    if len(volumes) >= 10:
+        recent_avg = sum(volumes[-3:]) / 3
+        prev_avg = sum(volumes[-10:-3]) / 7
+        if recent_avg > prev_avg * 1.5:
+            score += 10
+            features.append("放量突破")
+            signals.append("可能是启动信号")
+    
+    # 限制分数范围
+    score = max(0, min(100, score))
+    
+    return {
+        'score': round(score, 1),
+        'features': features,
+        'signals': signals
+    }
+
+
+
+# ============================================
 # ATR (平均真实波幅) - v2.3 新增
 # ============================================
 

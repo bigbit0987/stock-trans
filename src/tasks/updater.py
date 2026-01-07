@@ -22,17 +22,22 @@ sys.path.insert(0, PROJECT_ROOT)
 import akshare as ak
 from config.settings import STRATEGY, RPS_DATA_DIR, CONCURRENT, NETWORK, CACHE
 from src.cache_manager import cache_manager
+from src.cache_manager import cache_manager
 from src.utils import logger
+from src.factors import get_market_condition
+from src.data_loader import get_all_sector_mappings
 
 
-def get_stock_momentum_fast(code: str, name: str) -> Optional[Dict]:
+
+def get_stock_momentum_fast(code: str, name: str, window: int = 120) -> Optional[Dict]:
     """
     快速获取股票动量数据
     1. 先检查动量缓存
     2. 再检查历史数据缓存
     3. 最后从API获取
     """
-    window = STRATEGY.get('rps_window', 120)
+    # window argument is now passed in
+
     
     # 1. 检查动量缓存（最快）
     cached_momentum = cache_manager.get_momentum(code)
@@ -107,17 +112,36 @@ def run_updater():
     total = len(stock_info)
     logger.info(f"   共 {total} 只标的")
     
+    # --- 动态 RPS 周期 (v2.4 新增) ---
+    default_window = STRATEGY.get('rps_window', 120)
+    rps_window = default_window
+    
+    try:
+        market_cond = get_market_condition()
+        if market_cond.get('trend') == '上升趋势':
+            rps_window = 20 # 牛市用更敏感的短期动量
+            logger.info(f"   📈 市场处于上升趋势，使用短期 RPS 周期: {rps_window}天")
+        elif market_cond.get('trend') == '震荡偏强':
+            rps_window = 50
+            logger.info(f"   📊 市场震荡偏强，使用中期 RPS 周期: {rps_window}天")
+        elif market_cond.get('trend') == '下降趋势':
+            rps_window = 120 # 熊市用长期动量过滤噪音
+            logger.info(f"   📉 市场处于下降趋势，使用长期 RPS 周期: {rps_window}天")
+        else:
+             logger.info(f"   ⚖️ 使用默认 RPS 周期: {rps_window}天")
+    except Exception as e:
+        logger.warning(f"获取大盘状态失败，使用默认周期: {e}")
+
     # 分批处理
     batch_size = CONCURRENT.get('batch_size', 100)
+
     max_workers = CONCURRENT.get('max_workers', 30)
     all_results = []
     
-    logger.info(f"\n🔄 正在计算个股动量...")
+    logger.info(f"\n🔄 正在计算个股动量 (窗口: {rps_window}天)...")
     logger.info(f"   批次大小: {batch_size}, 并发线程: {max_workers}")
     
     start_time = time.time()
-    cache_hits = 0
-    api_calls = 0
     
     for batch_idx in range(0, total, batch_size):
         batch_end = min(batch_idx + batch_size, total)
@@ -127,7 +151,7 @@ def run_updater():
         
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
-                executor.submit(get_stock_momentum_fast, row['代码'], row['名称']): row['代码']
+                executor.submit(get_stock_momentum_fast, row['代码'], row['名称'], rps_window): row['代码']
                 for _, row in batch_df.iterrows()
             }
             
@@ -162,9 +186,51 @@ def run_updater():
         return
     
     rps_df = pd.DataFrame(all_results)
-    # 计算百分比排名
+    
+    # --- 1. 全市场 RPS 排名 ---
     rps_df['RPS'] = rps_df['momentum'].rank(pct=True) * 100
+    
+    # --- 2. 行业板块 RPS 排名 (v2.4 新增) ---
+    logger.info("\n📊 计算行业板块 RPS...")
+    sector_map = get_all_sector_mappings()
+    rps_df['板块'] = rps_df['代码'].map(sector_map).fillna('其他')
+    
+    # 分组计算板块内 RPS
+    rps_df['板块RPS'] = rps_df.groupby('板块')['momentum'].rank(pct=True) * 100
+    # 填充NaN (如果板块只有一个股票)
+    rps_df['板块RPS'] = rps_df['板块RPS'].fillna(50) 
+    
+    # --- 3. RPS 趋势追踪 (v2.4 新增) ---
+    logger.info("📈 追踪 RPS 变化趋势...")
+    try:
+        # 寻找最近的一个旧文件
+        files = sorted([f for f in os.listdir(RPS_DATA_DIR) if f.startswith('rps_rank_')])
+        if len(files) >= 1: # 只要有文件就行，最近的一个不是今天就是昨天（如果今天还没生成）
+             # 排除今天生成的文件(如果已存在)
+             current_filename = f"rps_rank_{datetime.date.today().strftime('%Y%m%d')}.csv"
+             history_files = [f for f in files if f != current_filename]
+             
+             if history_files:
+                 last_file = history_files[-1] # 最近的历史文件
+                 prev_df = pd.read_csv(os.path.join(RPS_DATA_DIR, last_file))
+                 # 创建 代码->RPS 映射
+                 prev_rps_map = dict(zip(prev_df['代码'].astype(str).str.zfill(6), prev_df['RPS']))
+                 
+                 # 计算变化
+                 rps_df['RPS变动'] = rps_df.apply(
+                     lambda x: x['RPS'] - prev_rps_map.get(x['代码'], x['RPS']), axis=1
+                 )
+             else:
+                 rps_df['RPS变动'] = 0
+        else:
+             rps_df['RPS变动'] = 0
+             
+    except Exception as e:
+        logger.warning(f"RPS 趋势计算失败: {e}")
+        rps_df['RPS变动'] = 0
+
     rps_df = rps_df.sort_values(by='RPS', ascending=False)
+
     
     # 保存结果
     today = datetime.date.today().strftime("%Y%m%d")
@@ -181,8 +247,10 @@ def run_updater():
     logger.info(f"   处理速度: {len(all_results)/total_time:.1f} 只/秒")
     logger.info(f"   总耗时: {total_time:.1f} 秒 ({total_time/60:.1f} 分钟)")
     
+    logger.info(f"   总耗时: {total_time:.1f} 秒 ({total_time/60:.1f} 分钟)")
+    
     logger.info("\n📈 RPS 强度前 15 名:")
-    print_df = rps_df[['代码', '名称', 'RPS', 'momentum']].head(15)
+    print_df = rps_df[['代码', '名称', 'RPS', '板块', '板块RPS', 'RPS变动']].head(15)
     logger.info(print_df.to_string(index=False))
     logger.info("=" * 60)
     

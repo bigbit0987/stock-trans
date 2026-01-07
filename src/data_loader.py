@@ -204,3 +204,86 @@ def get_cached_momentum(code: str) -> Optional[dict]:
 def get_cache_stats() -> dict:
     """获取缓存统计"""
     return cache_manager.get_cache_stats()
+
+
+def get_all_sector_mappings(use_cache: bool = True) -> Dict[str, str]:
+    """
+    获取全市场股票的板块映射 (Code -> SectorName)
+    
+    策略:
+    1. 优先读取本地缓存 (data/sector_map.json)
+    2. 如果缓存过期(>7天)或强制刷新, 则从API获取
+    3. API获取方式: 获取所有板块名称 -> 并发获取每个板块的成分股 -> 构建映射
+    """
+    import json
+    
+    SECTOR_MAP_FILE = os.path.join(RPS_DATA_DIR, "sector_map.json")
+    
+    # 1. 尝试读取缓存
+    if use_cache and os.path.exists(SECTOR_MAP_FILE):
+        try:
+            # 检查文件时间
+            mtime = os.path.getmtime(SECTOR_MAP_FILE)
+            if time.time() - mtime < 7 * 24 * 3600: # 7天有效期
+                with open(SECTOR_MAP_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except:
+            pass
+            
+    logger.info("📡 正在全量更新板块数据 (大概需要 1-2 分钟)...")
+    
+    mapping = {}
+    try:
+        # 获取所有行业板块
+        boards = ak.stock_board_industry_name_em()
+        if boards is None or boards.empty:
+            return {}
+            
+        board_names = boards['板块名称'].tolist()
+        
+        # 并发获取板块成分股
+        def _get_cons(name):
+            try:
+                df = ak.stock_board_industry_cons_em(symbol=name)
+                if df is not None and not df.empty:
+                    return name, df['代码'].tolist()
+            except:
+                return name, []
+            return name, []
+
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_board = {executor.submit(_get_cons, name): name for name in board_names}
+            
+            processed = 0
+            for future in as_completed(future_to_board):
+                name, codes = future.result()
+                for code in codes:
+                    # 一个股票可能属于多个板块吗？东方财富的行业板块通常是主行业
+                    # 这里简单的覆盖，或者保留第一个
+                    if code not in mapping:
+                        mapping[code] = name
+                
+                processed += 1
+                if processed % 10 == 0:
+                    print(f"\r   进度: {processed}/{len(board_names)}", end="")
+        
+        print("") # new line
+        
+        # 保存缓存
+        os.makedirs(os.path.dirname(SECTOR_MAP_FILE), exist_ok=True)
+        with open(SECTOR_MAP_FILE, 'w', encoding='utf-8') as f:
+            json.dump(mapping, f, ensure_ascii=False)
+            
+        logger.info(f"   ✅ 板块数据更新完成，共 {len(mapping)} 只股票归类")
+        return mapping
+        
+    except Exception as e:
+        logger.error(f"   ❌ 获取板块数据失败: {e}")
+        # 如果失败且有旧缓存，尝试读取旧缓存
+        if os.path.exists(SECTOR_MAP_FILE):
+            try:
+                with open(SECTOR_MAP_FILE, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+            except:
+                pass
+        return {}

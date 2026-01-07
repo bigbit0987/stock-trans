@@ -227,10 +227,16 @@ def run_scan():
                     
                     # 计算 RPS (如果存在)
                     rps_score = 0
+                    sector_rps = 0
+                    rps_change = 0
+                    
                     if has_rps:
                         rps_row = rps_df[rps_df['代码'] == code]
                         if not rps_row.empty:
-                            rps_score = rps_row.iloc[0]['RPS']
+                            row_data = rps_row.iloc[0]
+                            rps_score = row_data.get('RPS', 0)
+                            sector_rps = row_data.get('板块RPS', 0)
+                            rps_change = row_data.get('RPS变动', 0)
                     
                     # 提取前一天数据 (hist 的最后一行通常是前一个交易日)
                     prev_day = hist.iloc[-1]
@@ -244,7 +250,8 @@ def run_scan():
                     strategy_result = generate_signal(
                         code, data['name'], data['current_close'], 
                         data['pct_change'], data['turnover'], data['volume_ratio'], data['amplitude'],
-                        hist_closes, prev_close, prev_open, prev_pct, rps_score
+                        hist_closes, prev_close, prev_open, prev_pct, rps_score,
+                        sector_rps, rps_change
                     )
                     
                     if strategy_result:
