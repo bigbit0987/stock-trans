@@ -15,16 +15,46 @@ from config import SCHEDULER
 
 # 任务定义
 TASKS = {
-    'update_rps': {
-        'command': ['update'],
-        'time': SCHEDULER['update_rps_time'],
-        'description': '更新 RPS 数据'
+    # === 早盘任务 ===
+    'premarket': {
+        'command': ['premarket', '--push'],
+        'time': '09:22',
+        'description': '集合竞价预警'
     },
-    'check': {
-        'command': ['check', '--push'],
-        'time': '14:30',
-        'description': '持仓巡检'
+    
+    # === 盘中虚拟持仓监控 (策略验证) ===
+    'virtual_am_1': {
+        'command': ['virtual', '--push'],
+        'time': '09:45',
+        'description': '策略验证 (开盘后)'
     },
+    'virtual_am_2': {
+        'command': ['virtual', '--push'],
+        'time': '10:30',
+        'description': '策略验证 (上午)'
+    },
+    'virtual_am_3': {
+        'command': ['virtual', '--push'],
+        'time': '11:15',
+        'description': '策略验证 (午前)'
+    },
+    'virtual_pm_1': {
+        'command': ['virtual', '--push'],
+        'time': '13:15',
+        'description': '策略验证 (午后)'
+    },
+    'virtual_pm_2': {
+        'command': ['virtual', '--push'],
+        'time': '14:00',
+        'description': '策略验证 (下午)'
+    },
+    'virtual_pm_3': {
+        'command': ['virtual', '--push'],
+        'time': '14:45',
+        'description': '策略验证 (尾盘前)'
+    },
+    
+    # === 尾盘任务 ===
     'scan_1': {
         'command': ['scan', '--push'],
         'time': SCHEDULER['scan_time_1'],
@@ -34,7 +64,24 @@ TASKS = {
         'command': ['scan', '--push'],
         'time': SCHEDULER['scan_time_2'],
         'description': '尾盘扫描 (第二次)'
-    }
+    },
+    
+    # === 收盘后任务 ===
+    'performance': {
+        'command': ['performance', '--update'],
+        'time': '15:30',
+        'description': '更新效果追踪'
+    },
+    'update_rps': {
+        'command': ['update'],
+        'time': SCHEDULER['update_rps_time'],
+        'description': '更新 RPS 数据'
+    },
+    'weekly_report': {
+        'command': ['virtual', '--stats'],
+        'time': '18:00',
+        'description': '策略验证统计'
+    },
 }
 
 

@@ -210,3 +210,59 @@ def notify_premarket_alert(alerts: List[Dict]):
     content = "\n".join(lines)
     notify_all("📢 集合竞价预警", content)
 
+
+def notify_realtime_monitor(alerts: List[Dict]):
+    """
+    推送盘中实时监控预警
+    
+    Args:
+        alerts: 预警列表，每个包含 code, name, type, current, buy_price, pnl_pct, message 等
+    """
+    if not alerts:
+        return
+    
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines = [f"📅 监控时间: {now}\n"]
+    
+    # 按类型分组
+    profit_alerts = [a for a in alerts if a['type'] == 'TAKE_PROFIT']
+    loss_alerts = [a for a in alerts if a['type'] == 'STOP_LOSS']
+    drawdown_alerts = [a for a in alerts if a['type'] == 'DRAWDOWN']
+    
+    if profit_alerts:
+        lines.append("### 🎉 止盈提醒\n")
+        for a in profit_alerts:
+            lines.append(f"**{a['code']} {a['name']}**")
+            lines.append(f"  买入: {a['buy_price']} → 现价: {a['current']:.2f}")
+            lines.append(f"  {a['message']}")
+            # 根据策略给出建议
+            strategy = a.get('strategy', 'STABLE')
+            if strategy == 'RPS_CORE':
+                lines.append(f"  👉 趋势核心股，可继续持有观察")
+            elif strategy == 'POTENTIAL':
+                lines.append(f"  👉 潜力股，建议卖出一半锁定利润")
+            else:
+                lines.append(f"  👉 稳健标的，建议落袋为安")
+            lines.append("")
+    
+    if loss_alerts:
+        lines.append("### ⚠️ 止损预警\n")
+        for a in loss_alerts:
+            lines.append(f"**{a['code']} {a['name']}**")
+            lines.append(f"  买入: {a['buy_price']} → 现价: {a['current']:.2f}")
+            lines.append(f"  {a['message']}")
+            lines.append(f"  👉 建议考虑止损出局")
+            lines.append("")
+    
+    if drawdown_alerts:
+        lines.append("### 📉 回撤预警\n")
+        for a in drawdown_alerts:
+            lines.append(f"**{a['code']} {a['name']}**")
+            lines.append(f"  买入: {a['buy_price']} → 最高: {a.get('highest', 0):.2f} → 现价: {a['current']:.2f}")
+            lines.append(f"  {a['message']}")
+            lines.append(f"  👉 注意保护利润，考虑止盈")
+            lines.append("")
+    
+    content = "\n".join(lines)
+    notify_all("📡 盘中监控预警", content)
+

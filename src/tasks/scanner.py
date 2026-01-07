@@ -235,6 +235,20 @@ def run_scan():
     logger.info(print_df.to_string(index=False))
     logger.info("=" * 60)
     
+    # 自动记录推荐用于效果追踪
+    try:
+        from src.tasks.performance_tracker import record_daily_recommendations
+        record_daily_recommendations(signals)
+    except Exception as e:
+        logger.warning(f"记录推荐失败: {e}")
+    
+    # 自动加入虚拟持仓进行策略验证
+    try:
+        from src.tasks.virtual_tracker import add_recommendations_to_virtual
+        add_recommendations_to_virtual(signals)
+    except Exception as e:
+        logger.warning(f"加入虚拟持仓失败: {e}")
+    
     # 返回结果供调用方(如 main.py)处理通知逻辑
     return signals
 
