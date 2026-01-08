@@ -70,7 +70,17 @@ def check_market_risk(realtime_df: pd.DataFrame = None) -> tuple:
 
 
 def run_scan():
-    """运行尾盘扫描"""
+    """运行尾盘扫描
+    
+    主要功能:
+    1. 检查大盘风险状态
+    2. 获取实时行情数据
+    3. 多轮筛选符合条件的股票
+    4. 计算技术指标和RPS强度
+    5. 生成选股信号和交易建议
+    
+    运行时间建议: 14:35-14:50 (尾盘时段)
+    """
     logger.info("=" * 60)
     logger.info("🚀 尾盘选股扫描启动 (多因子增强版 v2.3)")
     logger.info(f"   时间: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -80,7 +90,7 @@ def run_scan():
     try:
         cache_stats = get_cache_stats()
         logger.info(f"\n📦 缓存状态: 历史数据 {cache_stats['history_cached']} 只, 动量 {cache_stats['momentum_cached']} 只")
-    except:
+    except Exception:
         pass
     
     # 检查是否周末
@@ -229,14 +239,21 @@ def run_scan():
                     rps_score = 0
                     sector_rps = 0
                     rps_change = 0
+                    sector_name = ''  # 板块名称，用于板块滤网
                     
                     if has_rps:
                         rps_row = rps_df[rps_df['代码'] == code]
                         if not rps_row.empty:
                             row_data = rps_row.iloc[0]
-                            rps_score = row_data.get('RPS', 0)
-                            sector_rps = row_data.get('板块RPS', 0)
-                            rps_change = row_data.get('RPS变动', 0)
+                            # 使用 pd.notna 检查空值，确保不会传递 NaN
+                            rps_val = row_data.get('RPS', 0)
+                            rps_score = rps_val if pd.notna(rps_val) else 0
+                            sector_rps_val = row_data.get('板块RPS', 0)
+                            sector_rps = sector_rps_val if pd.notna(sector_rps_val) else 0
+                            rps_change_val = row_data.get('RPS变动', 0)
+                            rps_change = rps_change_val if pd.notna(rps_change_val) else 0
+                            sector_val = row_data.get('板块', '')
+                            sector_name = sector_val if pd.notna(sector_val) else ''  # 获取板块名称
                     
                     # 提取前一天数据 (hist 的最后一行通常是前一个交易日)
                     prev_day = hist.iloc[-1]
@@ -255,6 +272,9 @@ def run_scan():
                     )
                     
                     if strategy_result:
+                        # 添加板块名称（用于板块滤网功能）
+                        strategy_result['板块'] = sector_name
+                        
                         # ---【计算建议仓位】---
                         target_amt = CAPITAL.get('target_amount_per_stock', 0)
                         if target_amt > 0:
@@ -319,11 +339,20 @@ def run_scan():
             
             for s in signals:
                 code = s.get('代码', '')
-                sector = get_stock_sector(code)
+                # 优先使用已有的板块信息（来自batch_calculate_scores或RPS数据）
+                # 避免逐个调用get_stock_sector导致性能问题
+                sector = s.get('板块', '') or s.get('sector', '')
+                if not sector:
+                    # 只有在没有板块信息时才尝试获取（但这应该很少发生）
+                    sector = get_stock_sector(code)
+                
                 if sector and is_sector_strong(sector, all_sectors, top_pct):
                     filtered_signals.append(s)
                 elif s.get('grade') == 'A':
                     # A级股票不受板块限制
+                    filtered_signals.append(s)
+                elif not sector:
+                    # 无法获取板块信息的股票也放行（不因数据问题错过机会）
                     filtered_signals.append(s)
             
             if filtered_signals:

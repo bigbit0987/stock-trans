@@ -35,7 +35,7 @@ def load_virtual_positions() -> Dict:
         try:
             with open(VIRTUAL_POSITIONS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except:
+        except (json.JSONDecodeError, IOError):
             return {}
     return {}
 
@@ -53,7 +53,7 @@ def load_virtual_trades() -> List[Dict]:
         try:
             with open(VIRTUAL_TRADES_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except:
+        except (json.JSONDecodeError, IOError):
             return []
     return []
 
@@ -230,7 +230,7 @@ def analyze_sell_signal(
                     'reason': f'触发ATR止损 (止损位={atr_stop:.2f}, 2倍ATR={atr*2:.2f})',
                     'suggestion': '根据波动率止损，避免更大损失'
                 }
-    except:
+    except Exception:
         pass
     
     # =========================================
@@ -254,7 +254,7 @@ def analyze_sell_signal(
                         'reason': f'移动止盈触发 (最高盈利{max_pnl:.1f}%, 回撤{drawdown:.1f}%)',
                         'suggestion': f'利润回吐超{callback}%，锁定利润'
                     }
-        except:
+        except Exception:
             pass
     
     # =========================================

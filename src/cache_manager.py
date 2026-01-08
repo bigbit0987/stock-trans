@@ -158,7 +158,7 @@ class CacheManager:
             
             # 如果最后日期不是今天，需要更新
             return last_date != today, last_date
-        except:
+        except Exception:
             return True, None
     
     def get_all_cached_codes(self) -> List[str]:

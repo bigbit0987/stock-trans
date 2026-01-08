@@ -47,7 +47,7 @@ def send_dingtalk(title: str, content: str) -> bool:
     try:
         response = requests.post(url, json=data, timeout=10)
         return response.json().get('errcode') == 0
-    except:
+    except (requests.RequestException, ValueError):
         return False
 
 
@@ -66,7 +66,7 @@ def send_wechat(title: str, content: str) -> bool:
     try:
         response = requests.post(webhook, json=data, timeout=10)
         return response.json().get('errcode') == 0
-    except:
+    except (requests.RequestException, ValueError):
         return False
 
 
@@ -82,7 +82,7 @@ def send_serverchan(title: str, content: str) -> bool:
     try:
         response = requests.post(url, data={'title': title, 'desp': content}, timeout=10)
         return response.json().get('code') == 0
-    except:
+    except (requests.RequestException, ValueError):
         return False
 
 

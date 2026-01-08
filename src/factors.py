@@ -153,15 +153,19 @@ def get_money_flow_rank(top_n: int = 100) -> pd.DataFrame:
             logger.warning("资金流向数据获取失败")
             return pd.DataFrame()
         
+        # 确保数值列是数值类型 (akshare有时返回字符串)
+        df['今日主力净流入-净额'] = pd.to_numeric(df['今日主力净流入-净额'], errors='coerce').fillna(0)
+        df['今日主力净流入-净占比'] = pd.to_numeric(df['今日主力净流入-净占比'], errors='coerce').fillna(0)
+        
         # 筛选主力净流入为正的股票
-        df = df[df['主力净流入-净额'] > 0].head(top_n)
+        df = df[df['今日主力净流入-净额'] > 0].head(top_n)
         
         # 标准化列名
         result = pd.DataFrame({
             '代码': df['代码'].astype(str).str.zfill(6),
             '名称': df['名称'],
-            '主力净流入': df['主力净流入-净额'],
-            '主力净流入占比': df['主力净流入-净占比'],
+            '主力净流入': df['今日主力净流入-净额'],
+            '主力净流入占比': df['今日主力净流入-净占比'],
         })
         
         return result
@@ -212,7 +216,8 @@ def get_stock_money_flow(code: str) -> Dict:
             'retail_inflow': latest.get('小单净流入-净额', 0),
             'score': score,
         }
-    except:
+    except Exception as e:
+        logger.debug(f"获取 {code} 资金流向失败: {e}")
         return {'main_inflow': 0, 'main_inflow_pct': 0, 'retail_inflow': 0, 'score': 50}
 
 
@@ -251,14 +256,86 @@ def get_hot_sectors(top_n: int = 10) -> List[Dict]:
         return []
 
 
-def get_stock_sector(code: str) -> Optional[str]:
-    """获取股票所属行业板块"""
+# 板块缓存 (避免重复API调用)
+_sector_cache = {}
+_sector_cache_loaded = False
+
+def load_sector_cache() -> Dict[str, str]:
+    """
+    批量加载所有股票的板块信息
+    通过板块成分股接口反向构建股票->板块映射
+    """
+    global _sector_cache, _sector_cache_loaded
+    
+    if _sector_cache_loaded:
+        return _sector_cache
+    
     try:
-        df = ak.stock_individual_info_em(symbol=code)
-        if df is not None and '所属行业' in df['item'].values:
-            return df[df['item'] == '所属行业']['value'].iloc[0]
-    except:
-        pass
+        logger.info("   📂 正在加载板块映射缓存...")
+        # 获取所有行业板块
+        boards = ak.stock_board_industry_name_em()
+        if boards is None or boards.empty:
+            return {}
+        
+        # 只处理前30个板块以加快速度
+        for _, board in boards.head(30).iterrows():
+            sector_name = board['板块名称']
+            try:
+                # 获取板块成分股
+                cons = ak.stock_board_industry_cons_em(symbol=sector_name)
+                if cons is not None and not cons.empty:
+                    for code in cons['代码'].tolist():
+                        code_str = str(code).zfill(6)
+                        if code_str not in _sector_cache:
+                            _sector_cache[code_str] = sector_name
+            except Exception:
+                continue
+        
+        _sector_cache_loaded = True
+        logger.info(f"   ✅ 板块缓存加载完成: {len(_sector_cache)} 只股票")
+    except Exception as e:
+        logger.warning(f"板块缓存加载失败: {e}")
+    
+    return _sector_cache
+
+
+def get_stock_sector(code: str) -> Optional[str]:
+    """
+    获取股票所属行业板块 (优先使用缓存)
+    跨平台兼容版本，使用threading实现超时
+    """
+    global _sector_cache
+    
+    code_str = str(code).zfill(6)
+    
+    # 优先使用缓存
+    if code_str in _sector_cache:
+        return _sector_cache[code_str]
+    
+    # 缓存未命中，尝试单独查询 (带超时保护，跨平台兼容)
+    try:
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+        
+        def _fetch_sector():
+            df = ak.stock_individual_info_em(symbol=code_str)
+            if df is not None and '所属行业' in df['item'].values:
+                return df[df['item'] == '所属行业']['value'].iloc[0]
+            return None
+        
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_fetch_sector)
+            try:
+                sector = future.result(timeout=2)  # 2秒超时
+                if sector:
+                    _sector_cache[code_str] = sector  # 存入缓存
+                    return sector
+            except FuturesTimeoutError:
+                logger.debug(f"获取 {code_str} 板块信息超时")
+            except Exception as e:
+                logger.debug(f"获取 {code_str} 板块信息失败: {e}")
+    except Exception as e:
+        logger.debug(f"板块查询异常 {code_str}: {e}")
+    
     return None
 
 
@@ -268,8 +345,8 @@ def get_sector_stocks(sector_name: str) -> List[str]:
         df = ak.stock_board_industry_cons_em(symbol=sector_name)
         if df is not None and not df.empty:
             return df['代码'].tolist()
-    except:
-        pass
+    except Exception as e:
+        logger.debug(f"获取板块 {sector_name} 成分股失败: {e}")
     return []
 
 
@@ -296,7 +373,8 @@ def calculate_sector_score(code: str, hot_sectors: List[Dict]) -> float:
                     return 75
         
         return 50  # 非热门板块
-    except:
+    except Exception as e:
+        logger.debug(f"计算 {code} 板块评分失败: {e}")
         return 50
 
 
@@ -363,7 +441,8 @@ def get_stock_valuation(code: str) -> Dict:
             'market_cap': round(market_cap, 2),
             'score': min(max(score, 0), 100),  # 限制在0-100
         }
-    except:
+    except Exception as e:
+        logger.debug(f"获取 {code} 估值数据失败: {e}")
         return {'pe': 0, 'pb': 0, 'ps': 0, 'market_cap': 0, 'score': 50}
 
 
@@ -520,11 +599,13 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
     try:
         outflow_df = ak.stock_individual_fund_flow_rank(indicator="今日")
         if outflow_df is not None and not outflow_df.empty:
+            # 确保数值类型
+            outflow_df['今日主力净流入-净额'] = pd.to_numeric(outflow_df['今日主力净流入-净额'], errors='coerce').fillna(0)
             # 主力净流出超过1000万的
-            outflow_df = outflow_df[outflow_df['主力净流入-净额'] < -1000]
+            outflow_df = outflow_df[outflow_df['今日主力净流入-净额'] < -1000]
             money_outflow_set = set(outflow_df['代码'].astype(str).str.zfill(6).tolist())
-    except:
-        pass
+    except Exception as e:
+        logger.debug(f"获取资金流出数据失败: {e}")
     
     logger.info(f"   💰 资金流入股票: {len(money_inflow_set)} 只 | 资金流出: {len(money_outflow_set)} 只")
     
@@ -558,10 +639,11 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
             trap_count += 1
             money_flow_score = 10  # 严厉惩罚
         
-        # --- 板块共振评分 (加大权重) ---
+        # --- 板块共振评分 (使用RPS数据中的板块信息，避免API调用) ---
         sector_score = 50  # 默认
         try:
-            sector = get_stock_sector(code)
+            # 优先使用传入数据中的板块信息
+            sector = s.get('板块', '') or s.get('sector', '')
             if sector:
                 for hot in hot_sectors:
                     if hot['name'] in sector or sector in hot['name']:
@@ -573,16 +655,11 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
                         elif rank <= 10:
                             sector_score = 75   # TOP10板块
                         break
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"计算 {code} 板块共振评分失败: {e}")
         
-        # --- 估值评分 ---
-        valuation_score = 50
-        try:
-            val = get_stock_valuation(code)
-            valuation_score = val['score']
-        except:
-            pass
+        # --- 估值评分 (使用默认值，避免API调用导致卡顿) ---
+        valuation_score = 50  # 默认中性分
         
         # --- 量能因子评分 (v2.4 新增) ---
         volume_energy_score = 50  # 默认中性分
@@ -601,8 +678,8 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
             elif volume_ratio <= 0.5:
                 volume_energy_score = 30
                 volume_features.append("缩量")
-        except:
-            pass
+        except Exception as e:
+            logger.debug(f"计算 {code} 量能评分失败: {e}")
         
         # --- 加权计算总分 (v2.4 调整权重) ---
         raw_score = (

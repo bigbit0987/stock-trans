@@ -435,10 +435,11 @@ def load_recent_trades(days: int = 30) -> List[Dict]:
                 trade_date = datetime.strptime(t['sell_date'][:10], '%Y-%m-%d')
                 if trade_date.timestamp() >= cutoff:
                     recent.append(t)
-            except:
-                pass
+            except (KeyError, ValueError, TypeError):
+                # 跳过格式不正确的交易记录
+                continue
         return recent
-    except:
+    except (json.JSONDecodeError, IOError) as e:
         return []
 
 

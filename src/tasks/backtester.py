@@ -30,7 +30,7 @@ def get_history(code: str) -> pd.DataFrame:
             adjust="qfq"
         )
         return df if (df is not None and len(df) > 150) else None
-    except:
+    except Exception:
         return None
 
 

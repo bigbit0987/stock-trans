@@ -22,7 +22,6 @@ sys.path.insert(0, PROJECT_ROOT)
 import akshare as ak
 from config.settings import STRATEGY, RPS_DATA_DIR, CONCURRENT, NETWORK, CACHE
 from src.cache_manager import cache_manager
-from src.cache_manager import cache_manager
 from src.utils import logger
 from src.factors import get_market_condition
 from src.data_loader import get_all_sector_mappings
@@ -245,8 +244,6 @@ def run_updater():
     logger.info(f"   文件: {filepath}")
     logger.info(f"   有效数据: {len(rps_df)} 只")
     logger.info(f"   处理速度: {len(all_results)/total_time:.1f} 只/秒")
-    logger.info(f"   总耗时: {total_time:.1f} 秒 ({total_time/60:.1f} 分钟)")
-    
     logger.info(f"   总耗时: {total_time:.1f} 秒 ({total_time/60:.1f} 分钟)")
     
     logger.info("\n📈 RPS 强度前 15 名:")

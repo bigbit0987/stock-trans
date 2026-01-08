@@ -34,7 +34,7 @@ def load_alert_history() -> Dict:
         try:
             with open(ALERT_HISTORY_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except:
+        except (json.JSONDecodeError, IOError):
             return {}
     return {}
 
@@ -418,7 +418,7 @@ def clear_alert_history():
             alert_time = datetime.fromisoformat(time_str)
             if alert_time > cutoff:
                 new_history[key] = time_str
-        except:
+        except ValueError:
             pass
     
     save_alert_history(new_history)

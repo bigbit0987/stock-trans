@@ -35,7 +35,7 @@ def load_recommendations() -> Dict:
         try:
             with open(RECOMMENDATIONS_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
-        except:
+        except (json.JSONDecodeError, IOError):
             return {}
     return {}
 
@@ -94,7 +94,7 @@ def get_stock_price(code: str) -> Optional[float]:
         stock = df[df['代码'] == code]
         if not stock.empty:
             return stock.iloc[0]['最新价']
-    except:
+    except Exception:
         pass
     return None
 
@@ -116,7 +116,7 @@ def update_performance_tracking():
     for date_str, data in recommendations.items():
         try:
             rec_date = datetime.strptime(date_str, '%Y-%m-%d').date()
-        except:
+        except ValueError:
             continue
         
         days_passed = (today - rec_date).days

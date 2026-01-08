@@ -116,7 +116,7 @@ def get_stock_history_range(
             adjust=adjust
         )
         return df if len(df) > 0 else None
-    except:
+    except Exception:
         return None
 
 
@@ -227,7 +227,7 @@ def get_all_sector_mappings(use_cache: bool = True) -> Dict[str, str]:
             if time.time() - mtime < 7 * 24 * 3600: # 7天有效期
                 with open(SECTOR_MAP_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
-        except:
+        except (json.JSONDecodeError, IOError, OSError):
             pass
             
     logger.info("📡 正在全量更新板块数据 (大概需要 1-2 分钟)...")
@@ -247,7 +247,7 @@ def get_all_sector_mappings(use_cache: bool = True) -> Dict[str, str]:
                 df = ak.stock_board_industry_cons_em(symbol=name)
                 if df is not None and not df.empty:
                     return name, df['代码'].tolist()
-            except:
+            except Exception:
                 return name, []
             return name, []
 
@@ -284,6 +284,6 @@ def get_all_sector_mappings(use_cache: bool = True) -> Dict[str, str]:
             try:
                 with open(SECTOR_MAP_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
-            except:
+            except (json.JSONDecodeError, IOError):
                 pass
         return {}

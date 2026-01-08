@@ -82,7 +82,7 @@ def check_premarket():
                 market_status = "🟢 大盘高开，情绪良好"
             else:
                 market_status = "⚪ 大盘平开"
-    except:
+    except Exception:
         pass
     
     logger.info(f"\n📊 大盘情况: 上证 {market_gap:+.2f}% {market_status}")

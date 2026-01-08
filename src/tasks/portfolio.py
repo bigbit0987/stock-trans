@@ -62,7 +62,7 @@ def backup_data():
         while len(files) > 60:
             oldest = files.pop(0)
             os.remove(os.path.join(BACKUP_DIR, oldest))
-    except:
+    except Exception:
         pass
 
 
@@ -226,7 +226,7 @@ def close_position(code: str, sell_price: float = None, sell_quantity: int = 0, 
             else:
                 logger.error(f"❌ 无法获取 {code} 当前价格，请手动指定卖出价")
                 return
-        except:
+        except Exception:
             logger.error(f"❌ 无法获取 {code} 当前价格，请手动指定卖出价")
             return
     

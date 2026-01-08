@@ -83,6 +83,21 @@ MULTI_FACTOR = {
     },
 }
 
+# 验证因子权重配置
+def _validate_factor_weights():
+    """验证因子权重总和是否为1.0，如果不是则发出警告"""
+    weights = MULTI_FACTOR.get('weights', {})
+    total = sum(weights.values())
+    if abs(total - 1.0) > 0.001:  # 允许微小的浮点误差
+        import warnings
+        warnings.warn(
+            f"⚠️ 多因子权重配置错误: 总和为 {total:.2f}，应为 1.0。"
+            f"请检查 MULTI_FACTOR['weights'] 配置。",
+            UserWarning
+        )
+
+_validate_factor_weights()
+
 
 # ============================================
 # 大盘风控配置 (v2.3 增强)
