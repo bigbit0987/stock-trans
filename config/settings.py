@@ -53,8 +53,19 @@ STRATEGY = {
     
     # RPS 筛选
     'rps_min': 40,              # 最低 RPS 评分
-    'rps_window': 120,          # RPS 计算周期（天）
+    'rps_window': 120,          # RPS 计算周期（天）- 长周期趋势
     'rps_short_window': 20,     # v2.4: 短期RPS周期（捕捉短期爆发）
+    
+    # v2.4.1 新增: 前一天小阳线条件 (原硬编码在 strategy.py)
+    'prev_day_pct_min': 0,      # 前一天最小涨幅 %
+    'prev_day_pct_max': 5,      # 前一天最大涨幅 %
+    
+    # v2.4.1 新增: RPS"弱转强"信号阈值 (借鉴 Qbot 策略)
+    'rps_weak_to_strong': {
+        'rps120_threshold': 70,     # RPS120 低于此值视为"弱"
+        'rps20_breakthrough': 90,   # RPS20 突破此值视为"转强"
+        'enabled': True,            # 是否启用弱转强检测
+    },
 }
 
 
@@ -351,6 +362,9 @@ REALTIME_MONITOR = {
     # 回调提醒 (从最高点回撤)
     'drawdown_alert': -3,           # 从最高点回撤3%提醒
     
+    # 回撤监控触发条件 (v2.4.1 新增: 之前硬编码在 realtime_monitor.py 中)
+    'drawdown_monitor_min_profit': 3,   # 浮盈超过此值后才监控回撤 (%)
+    
     # 交易时间段
     'trading_start': '09:30',       # 开盘时间
     'trading_end': '15:00',         # 收盘时间
@@ -359,6 +373,22 @@ REALTIME_MONITOR = {
     
     # 提醒冷却时间 (秒) - 同一股票同一类型提醒的最小间隔
     'alert_cooldown': 3600,         # 1小时内同类型提醒只发一次
+}
+
+
+# ============================================
+# 持仓巡检配置 (v2.4.1 新增)
+# ============================================
+PORTFOLIO_CHECK = {
+    # 回撤止盈警报条件
+    'max_profit_threshold': 10,     # 历史最高浮盈达到此值后 (%)
+    'drawdown_threshold': -3,       # 回撤超过此值触发警报 (%)
+    
+    # 止盈提醒阈值
+    'take_profit_alert': 10,        # 当前盈利超过此值提醒 (%)
+    
+    # 亏损关注阈值
+    'loss_attention_threshold': -5, # 亏损超过此值时标记需关注 (%)
 }
 
 

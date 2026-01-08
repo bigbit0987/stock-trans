@@ -610,7 +610,37 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
     logger.info(f"   💰 资金流入股票: {len(money_inflow_set)} 只 | 资金流出: {len(money_outflow_set)} 只")
     
     # =========================================
-    # 4. 批量计算评分
+    # 4. 预先获取全市场估值数据 (v2.4.2 性能优化)
+    # =========================================
+    logger.info("   📊 正在批量获取全市场估值数据...")
+    valuation_map = {}
+    try:
+        # 一次性拉取全市场实时数据，包含PE/PB/市值等
+        # 使用 stock_zh_a_spot_em 接口获取实时行情，其中包含动态市盈率、市净率、总市值
+        spot_df = ak.stock_zh_a_spot_em()
+        
+        if spot_df is not None and not spot_df.empty:
+            # 建立映射: code -> row data
+            # 代码需要标准化为6位字符串
+            spot_df['代码'] = spot_df['代码'].astype(str).str.zfill(6)
+            
+            # 为了加速，我们可以只保留我们关心的列，并转换为字典
+            # 注意: 不同版本的 akshare 返回列名可能略有差异，这里做防御性处理
+            needed_cols = ['代码', '市盈率-动态', '市净率', '市销率', '总市值']
+            available_cols = [c for c in needed_cols if c in spot_df.columns]
+            
+            if len(available_cols) > 1:
+                # 转换为字典: { '000001': {'市盈率-动态': 10.5, ...}, ... }
+                # orient='index' 会以索引为key，所以先设代码为索引
+                valuation_map = spot_df.set_index('代码')[available_cols[1:]].to_dict('index')
+                logger.info(f"   ✅ 已缓存 {len(valuation_map)} 只股票的估值数据")
+            else:
+                logger.warning("   ⚠️ 获取全市场估值数据失败: 缺少必要字段")
+    except Exception as e:
+        logger.warning(f"   ⚠️ 批量获取估值数据失败 (将回退到逐个获取): {e}")
+
+    # =========================================
+    # 5. 批量计算评分
     # =========================================
     results = []
     trap_count = 0  # 诱多信号计数
@@ -658,8 +688,35 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
         except Exception as e:
             logger.debug(f"计算 {code} 板块共振评分失败: {e}")
         
-        # --- 估值评分 (使用默认值，避免API调用导致卡顿) ---
+        # --- 估值评分 (v2.4.2: 使用预加载数据极速计算) ---
         valuation_score = 50  # 默认中性分
+        try:
+            val_data = valuation_map.get(code)
+            if val_data:
+                # 提取数据
+                pe = val_data.get('市盈率-动态', 0) or 0
+                pb = val_data.get('市净率', 0) or 0
+                market_cap = (val_data.get('总市值', 0) or 0) / 100000000  # 转为亿
+                
+                # PE评分 (低PE加分)
+                if 0 < pe < 15: valuation_score += 20
+                elif 15 <= pe < 25: valuation_score += 10
+                elif 25 <= pe < 40: valuation_score += 0
+                elif pe >= 40 or pe < 0: valuation_score -= 10
+                
+                # PB评分 (低PB加分)
+                if 0 < pb < 1.5: valuation_score += 15
+                elif 1.5 <= pb < 3: valuation_score += 5
+                elif pb >= 5: valuation_score -= 10
+                
+                # 市值评分 (50-500亿中盘股加分)
+                if 50 <= market_cap <= 500: valuation_score += 15
+                elif 20 <= market_cap < 50 or 500 < market_cap <= 1000: valuation_score += 5
+                
+                # 限制范围
+                valuation_score = min(max(valuation_score, 0), 100)
+        except Exception:
+            pass  # 计算失败保持默认 50 分
         
         # --- 量能因子评分 (v2.4 新增) ---
         volume_energy_score = 50  # 默认中性分

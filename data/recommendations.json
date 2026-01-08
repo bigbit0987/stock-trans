@@ -2,24 +2,10 @@
   "2026-01-08": {
     "stocks": [
       {
-        "code": "002261",
-        "name": "拓维信息",
-        "price": 34.42,
-        "rps": 80.5,
-        "category": "💎 板块龙头",
-        "suggestion": "板块内领先，关注板块轮动机会",
-        "day1_price": null,
-        "day1_pnl": null,
-        "day3_price": null,
-        "day3_pnl": null,
-        "day5_price": null,
-        "day5_pnl": null
-      },
-      {
-        "code": "300719",
-        "name": "安达维尔",
-        "price": 18.24,
-        "rps": 55.0,
+        "code": "301456",
+        "name": "盘古智能",
+        "price": 31.65,
+        "rps": 74.6,
         "category": "📊 稳健向上",
         "suggestion": "RPS上升中，次日冲高可走",
         "day1_price": null,
@@ -30,12 +16,12 @@
         "day5_pnl": null
       },
       {
-        "code": "300192",
-        "name": "科德教育",
-        "price": 22.03,
-        "rps": 72.1,
-        "category": "📊 稳健标的",
-        "suggestion": "次日冲高即走，赚个稳妥",
+        "code": "301175",
+        "name": "中科环保",
+        "price": 6.13,
+        "rps": 82.9,
+        "category": "💎 板块龙头",
+        "suggestion": "板块内领先，关注板块轮动机会",
         "day1_price": null,
         "day1_pnl": null,
         "day3_price": null,
@@ -44,6 +30,6 @@
         "day5_pnl": null
       }
     ],
-    "recorded_at": "2026-01-08T13:42:05.443635"
+    "recorded_at": "2026-01-08T22:12:09.147411"
   }
 }

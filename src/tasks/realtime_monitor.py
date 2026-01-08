@@ -1,14 +1,16 @@
 #!/usr/bin/env python
 """
-盘中实时监控模块 (Realtime Monitor)
+盘中实时监控模块 (Realtime Monitor) v2.4.1
 功能：
 1. 盘中实时监控持仓股票价格
 2. 达到止盈/止损点时发送钉钉提醒
 3. 智能冷却机制，避免频繁骚扰
+
+v2.4.1 改进：
+- 使用线程安全的 JSON 读写，避免多进程并发时数据损坏
 """
 import os
 import sys
-import json
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
@@ -21,7 +23,7 @@ sys.path.insert(0, PROJECT_ROOT)
 import akshare as ak
 import pandas as pd
 from config import REALTIME_MONITOR
-from src.utils import logger
+from src.utils import logger, safe_read_json, safe_write_json
 
 
 # 提醒记录文件 (用于冷却机制)
@@ -29,21 +31,13 @@ ALERT_HISTORY_FILE = os.path.join(PROJECT_ROOT, "data", "alert_history.json")
 
 
 def load_alert_history() -> Dict:
-    """加载提醒历史记录"""
-    if os.path.exists(ALERT_HISTORY_FILE):
-        try:
-            with open(ALERT_HISTORY_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return {}
-    return {}
+    """加载提醒历史记录 (线程安全)"""
+    return safe_read_json(ALERT_HISTORY_FILE, default={})
 
 
 def save_alert_history(history: Dict):
-    """保存提醒历史记录"""
-    os.makedirs(os.path.dirname(ALERT_HISTORY_FILE), exist_ok=True)
-    with open(ALERT_HISTORY_FILE, 'w', encoding='utf-8') as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    """保存提醒历史记录 (线程安全 + 原子写入)"""
+    safe_write_json(ALERT_HISTORY_FILE, history)
 
 
 def can_send_alert(code: str, alert_type: str) -> bool:
@@ -189,8 +183,9 @@ def analyze_position(
     if highest_price > buy_price:
         max_pnl = (highest_price - buy_price) / buy_price * 100
         drawdown_alert = REALTIME_MONITOR['drawdown_alert']
+        min_profit_for_drawdown = REALTIME_MONITOR.get('drawdown_monitor_min_profit', 3)
         
-        if drawdown <= drawdown_alert and max_pnl > 3:  # 浮盈超过3%后才监控回撤
+        if drawdown <= drawdown_alert and max_pnl > min_profit_for_drawdown:
             alert_type = "drawdown"
             if can_send_alert(code, alert_type):
                 alerts.append({

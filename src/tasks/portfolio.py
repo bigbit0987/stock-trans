@@ -1,14 +1,17 @@
 #!/usr/bin/env python
 """
-持仓管理任务 (Portfolio Manager)
+持仓管理任务 (Portfolio Manager) v2.4.1
 功能：
 1. 记录持仓
 2. 每日巡检（监控止损位）
 3. 风险提醒
+
+v2.4.1 改进：
+- 使用线程安全的 JSON 读写，避免多进程并发时数据损坏
+- 增加 ATR 止损位计算和存储
 """
 import os
 import sys
-import json
 import datetime
 import pandas as pd
 
@@ -17,19 +20,16 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.insert(0, PROJECT_ROOT)
 
 import akshare as ak
-from config import RESULTS_DIR
-from src.utils import logger
+from config import RESULTS_DIR, PORTFOLIO_CHECK
+from src.utils import logger, safe_read_json, safe_write_json
 
 # 持仓文件路径
 HOLDINGS_FILE = os.path.join(PROJECT_ROOT, "data", "holdings.json")
 
 
 def load_holdings() -> dict:
-    """加载持仓数据"""
-    if os.path.exists(HOLDINGS_FILE):
-        with open(HOLDINGS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+    """加载持仓数据 (线程安全)"""
+    return safe_read_json(HOLDINGS_FILE, default={})
 
 
 # 备份目录
@@ -67,18 +67,11 @@ def backup_data():
 
 
 def save_holdings(holdings: dict):
-    """保存持仓数据（原子写入 + 自动备份）"""
-    import shutil
-    
-    os.makedirs(os.path.dirname(HOLDINGS_FILE), exist_ok=True)
-    
-    # 原子写入：先写临时文件，再重命名，防止断电丢数据
-    tmp_file = HOLDINGS_FILE + ".tmp"
-    with open(tmp_file, 'w', encoding='utf-8') as f:
-        json.dump(holdings, f, ensure_ascii=False, indent=2)
-    
-    # 操作系统级别的原子操作
-    shutil.move(tmp_file, HOLDINGS_FILE)
+    """保存持仓数据（线程安全 + 原子写入 + 自动备份）"""
+    # 使用线程安全的原子写入
+    if not safe_write_json(HOLDINGS_FILE, holdings):
+        logger.error("保存持仓数据失败！")
+        return
     
     # 自动备份 (每天只备份一次)
     today = datetime.date.today().strftime('%Y%m%d')
@@ -100,7 +93,7 @@ def add_position(
     note: str = ""
 ):
     """
-    添加持仓 (支持加仓合并)
+    添加持仓 (支持加仓合并) v2.4.1 增强版
     
     Args:
         code: 股票代码
@@ -109,7 +102,14 @@ def add_position(
         quantity: 买入数量
         strategy: 策略类型 (RPS_CORE=趋势核心, POTENTIAL=潜力股, STABLE=稳健标的)
         note: 备注
+    
+    v2.4.1 新增:
+        - 自动计算 ATR 并存储动态止损位
     """
+    from src.data_loader import get_stock_history
+    from src.indicators import calculate_atr, calculate_atr_stop_loss
+    from config import STOP_LOSS_STRATEGY
+    
     holdings = load_holdings()
     
     if code in holdings:
@@ -136,11 +136,19 @@ def add_position(
         # 策略类型不更新，保持原来的
         # 买入日期不更新，保留最早日期
         
+        # v2.4.1: 加仓时重新计算 ATR 止损位
+        atr_stop = _calculate_atr_stop_for_stock(code, new_price)
+        if atr_stop:
+            holdings[code]['atr_stop'] = atr_stop
+        
         save_holdings(holdings)
         logger.info(f"🔄 已合并持仓: {code} {name}")
         logger.info(f"   新成本: {new_price:.3f} | 数量: {total_qty}")
     else:
         # 新开仓
+        # v2.4.1: 计算 ATR 止损位
+        atr_stop = _calculate_atr_stop_for_stock(code, buy_price)
+        
         holdings[code] = {
             "name": name,
             "buy_price": buy_price,
@@ -148,10 +156,47 @@ def add_position(
             "buy_date": datetime.date.today().strftime("%Y-%m-%d"),
             "quantity": quantity,
             "strategy": strategy,
-            "note": note
+            "note": note,
+            "atr_stop": atr_stop  # v2.4.1: 动态 ATR 止损位
         }
         save_holdings(holdings)
         logger.info(f"✅ 已添加持仓: {code} {name} @ {buy_price}")
+        if atr_stop:
+            logger.info(f"   📊 ATR 动态止损位: {atr_stop:.2f}")
+
+
+def _calculate_atr_stop_for_stock(code: str, buy_price: float) -> float:
+    """
+    为股票计算 ATR 止损位 (内部函数)
+    
+    Returns:
+        ATR 止损价位，计算失败时返回 None
+    """
+    try:
+        from src.data_loader import get_stock_history
+        from src.indicators import calculate_atr, calculate_atr_stop_loss
+        from config import STOP_LOSS_STRATEGY
+        
+        # 获取历史数据计算 ATR
+        hist = get_stock_history(code, 30)
+        if hist is not None and len(hist) >= 14:
+            atr = calculate_atr(
+                hist['最高'].tolist(),
+                hist['最低'].tolist(),
+                hist['收盘'].tolist(),
+                period=STOP_LOSS_STRATEGY.get('atr_period', 14)
+            )
+            if atr > 0:
+                multiplier = STOP_LOSS_STRATEGY.get('atr_multiplier', 2.0)
+                return calculate_atr_stop_loss(buy_price, atr, multiplier)
+        
+        # 计算失败时使用固定止损
+        fixed_pct = STOP_LOSS_STRATEGY.get('fixed_stop_pct', -3.0)
+        return round(buy_price * (1 + fixed_pct / 100), 2)
+        
+    except Exception as e:
+        logger.warning(f"计算 {code} ATR 止损失败: {e}")
+        return None
 
 
 def remove_position(code: str):
@@ -385,11 +430,28 @@ def daily_check():
         # 持仓天数
         days_held = (datetime.date.today() - datetime.datetime.strptime(buy_date, "%Y-%m-%d").date()).days
         
+        # v2.4.1: 获取 ATR 止损位
+        atr_stop = info.get('atr_stop')
+        below_atr_stop = atr_stop and current < atr_stop
+        
         # 状态判定
         status = "✅"
         action = ""
         
-        if below_ma5:
+        # v2.4.1: ATR 止损优先检查
+        if below_atr_stop:
+            status = "🔴"
+            action = f"🚨 跌破ATR止损位！(止损价: {atr_stop:.2f})"
+            alerts.append({
+                'code': code,
+                'name': name,
+                'current': current,
+                'ma5': ma5,
+                'pnl': pnl,
+                'atr_stop': atr_stop,
+                'action': f'跌破ATR止损位({atr_stop:.2f})，建议立即止损'
+            })
+        elif below_ma5:
             status = "🔴"
             action = "⚠️ 跌破MA5！"
             
@@ -404,38 +466,47 @@ def daily_check():
                     'pnl': pnl,
                     'action': '跌破5日线，建议离场'
                 })
-        elif max_pnl > 10 and drawdown < -3:
-            # 【修复】回撤判定：只要历史最高浮盈过10%，且回撤超3%，强制预警
-            status = "🚨"
-            action = f"📉 回撤止盈警报！(最高浮盈 {max_pnl:.1f}% 后回撤 {drawdown:.1f}%)"
-            alerts.append({
-                'code': code,
-                'name': name,
-                'current': current,
-                'ma5': ma5,
-                'pnl': pnl,
-                'action': action
-            })
-        elif pnl > 10:
-            # 当前还在高位，报喜
-            status = "🟢"
-            action = "💰 止盈提醒！收益超 10%"
-            alerts.append({
-                'code': code,
-                'name': name,
-                'current': current,
-                'ma5': ma5,
-                'pnl': pnl,
-                'action': action
-            })
-        elif pnl < -5:
-            status = "🟡"
-            action = "注意亏损"
+        else:
+            # 只有在没有触发止损的情况下，才检查其他状态
+            # 使用配置文件中的阈值
+            max_profit_threshold = PORTFOLIO_CHECK.get('max_profit_threshold', 10)
+            drawdown_threshold = PORTFOLIO_CHECK.get('drawdown_threshold', -3)
+            take_profit_alert = PORTFOLIO_CHECK.get('take_profit_alert', 10)
+            loss_attention = PORTFOLIO_CHECK.get('loss_attention_threshold', -5)
+            
+            if max_pnl > max_profit_threshold and drawdown < drawdown_threshold:
+                # 回撤判定：只要历史最高浮盈过阈值，且回撤超阈值，强制预警
+                status = "🚨"
+                action = f"📉 回撤止盈警报！(最高浮盈 {max_pnl:.1f}% 后回撤 {drawdown:.1f}%)"
+                alerts.append({
+                    'code': code,
+                    'name': name,
+                    'current': current,
+                    'ma5': ma5,
+                    'pnl': pnl,
+                    'action': action
+                })
+            elif pnl > take_profit_alert:
+                # 当前还在高位，报喜
+                status = "🟢"
+                action = f"💰 止盈提醒！收益超 {take_profit_alert}%"
+                alerts.append({
+                    'code': code,
+                    'name': name,
+                    'current': current,
+                    'ma5': ma5,
+                    'pnl': pnl,
+                    'action': action
+                })
+            elif pnl < loss_attention:
+                status = "🟡"
+                action = "注意亏损"
         
         logger.info(f"  {status} {code} {name}")
         logger.info(f"     买入: {buy_price} ({buy_date}, 持有{days_held}天)")
         ma5_str = f"{ma5:.3f}" if ma5 else "N/A"
-        logger.info(f"     现价: {current:.2f} | 最高: {highest:.2f} | 盈亏: {pnl_str} (回撤: {drawdown:.1f}%)")
+        atr_stop_str = f" | ATR止损: {atr_stop:.2f}" if atr_stop else ""
+        logger.info(f"     现价: {current:.2f} | 最高: {highest:.2f} | 盈亏: {pnl_str} (回撤: {drawdown:.1f}%){atr_stop_str}")
         if action:
             logger.info(f"     👉 {action}")
         logger.info("")
@@ -449,7 +520,10 @@ def daily_check():
         logger.info("=" * 60)
         for alert in alerts:
             logger.info(f"  ❗ {alert['code']} {alert['name']}: {alert['action']}")
-            logger.info(f"     现价: {alert['current']:.2f} < MA5: {alert['ma5']:.2f}")
+            if 'atr_stop' in alert:
+                logger.info(f"     现价: {alert['current']:.2f} < ATR止损位: {alert['atr_stop']:.2f}")
+            else:
+                logger.info(f"     现价: {alert['current']:.2f} < MA5: {alert['ma5']:.2f}")
         logger.info("\n💡 建议: RPS_CORE 策略股票跌破5日线应止损出局！")
     
     return alerts

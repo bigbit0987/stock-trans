@@ -180,10 +180,13 @@ class CacheManager:
             for f in os.listdir(HISTORY_CACHE_DIR):
                 fpath = os.path.join(HISTORY_CACHE_DIR, f)
                 if os.path.isfile(fpath):
-                    age = now - os.path.getmtime(fpath)
-                    if age > max_age:
-                        os.remove(fpath)
-                        removed += 1
+                    try:
+                        age = now - os.path.getmtime(fpath)
+                        if age > max_age:
+                            os.remove(fpath)
+                            removed += 1
+                    except OSError:
+                        pass  # 忽略并发删除错误
             
             if removed > 0:
                 logger.info(f"🧹 清理了 {removed} 个过期缓存文件")

@@ -1,11 +1,15 @@
 #!/usr/bin/env python
 """
-RPS 数据更新任务 - 高性能版本
+RPS 数据更新任务 - 高性能版本 v2.4.1
 特性:
 1. 智能缓存: 支持日内缓存和历史数据持久化
 2. 增量更新: 只获取缺失/过期的数据
 3. 批量处理: 分批处理避免内存溢出
 4. 实时进度: 显示速度和预估剩余时间
+
+v2.4.1 新增:
+- RPS20 短周期指标计算
+- "弱转强"信号检测 (借鉴 Qbot 多周期 RPS 策略)
 """
 import os
 import sys
@@ -30,14 +34,13 @@ from src.data_loader import get_all_sector_mappings
 
 def get_stock_momentum_fast(code: str, name: str, window: int = 120) -> Optional[Dict]:
     """
-    快速获取股票动量数据
+    快速获取股票动量数据 (v2.4.1 增强版)
     1. 先检查动量缓存
     2. 再检查历史数据缓存
     3. 最后从API获取
-    """
-    # window argument is now passed in
-
     
+    v2.4.1 新增: 同时计算 RPS120 和 RPS20 的动量
+    """
     # 1. 检查动量缓存（最快）
     cached_momentum = cache_manager.get_momentum(code)
     if cached_momentum:
@@ -62,8 +65,13 @@ def get_stock_momentum_fast(code: str, name: str, window: int = 120) -> Optional
     
     try:
         close_now = df['收盘'].iloc[-1]
-        close_prev = df['收盘'].iloc[-window]
-        pct_change = (close_now - close_prev) / close_prev
+        
+        # v2.4.1: 同时计算长短周期动量
+        close_prev_long = df['收盘'].iloc[-window] if len(df) >= window else df['收盘'].iloc[0]
+        close_prev_short = df['收盘'].iloc[-20] if len(df) >= 20 else df['收盘'].iloc[0]
+        
+        pct_change_long = (close_now - close_prev_long) / close_prev_long
+        pct_change_short = (close_now - close_prev_short) / close_prev_short
         
         # 保存最近4天收盘价，供实时计算MA5
         last_4_closes = df['收盘'].tail(4).tolist()
@@ -71,7 +79,8 @@ def get_stock_momentum_fast(code: str, name: str, window: int = 120) -> Optional
         result = {
             '代码': code,
             '名称': name,
-            'momentum': pct_change,
+            'momentum': pct_change_long,           # 主动量 (RPS120 或动态周期)
+            'momentum_short': pct_change_short,    # v2.4.1: 短期动量 (RPS20)
             '最新价': close_now,
             'MA5': df['收盘'].tail(5).mean(),
             'last_4_closes_sum': sum(last_4_closes)
@@ -189,7 +198,32 @@ def run_updater():
     # --- 1. 全市场 RPS 排名 ---
     rps_df['RPS'] = rps_df['momentum'].rank(pct=True) * 100
     
-    # --- 2. 行业板块 RPS 排名 (v2.4 新增) ---
+    # --- 1.1 v2.4.1 新增: RPS20 短周期排名 ---
+    if 'momentum_short' in rps_df.columns:
+        rps_df['RPS20'] = rps_df['momentum_short'].rank(pct=True) * 100
+        logger.info("✅ 已计算 RPS20 短周期指标")
+    else:
+        rps_df['RPS20'] = rps_df['RPS']  # 回退方案
+    
+    # --- 1.2 v2.4.1 新增: "弱转强"信号检测 ---
+    weak_to_strong_config = STRATEGY.get('rps_weak_to_strong', {})
+    if weak_to_strong_config.get('enabled', True):
+        rps120_threshold = weak_to_strong_config.get('rps120_threshold', 70)
+        rps20_breakthrough = weak_to_strong_config.get('rps20_breakthrough', 90)
+        
+        # 弱转强: RPS120 较弱但 RPS20 突然走强
+        rps_df['弱转强'] = (
+            (rps_df['RPS'] < rps120_threshold) & 
+            (rps_df['RPS20'] > rps20_breakthrough)
+        )
+        
+        weak_to_strong_count = rps_df['弱转强'].sum()
+        if weak_to_strong_count > 0:
+            logger.info(f"🚀 检测到 {weak_to_strong_count} 只'弱转强'信号股 (RPS120<{rps120_threshold} 但 RPS20>{rps20_breakthrough})")
+    else:
+        rps_df['弱转强'] = False
+    
+    # --- 2. 行业板块 RPS 排名 ---
     logger.info("\n📊 计算行业板块 RPS...")
     sector_map = get_all_sector_mappings()
     rps_df['板块'] = rps_df['代码'].map(sector_map).fillna('其他')
@@ -199,18 +233,18 @@ def run_updater():
     # 填充NaN (如果板块只有一个股票)
     rps_df['板块RPS'] = rps_df['板块RPS'].fillna(50) 
     
-    # --- 3. RPS 趋势追踪 (v2.4 新增) ---
+    # --- 3. RPS 趋势追踪 ---
     logger.info("📈 追踪 RPS 变化趋势...")
     try:
         # 寻找最近的一个旧文件
         files = sorted([f for f in os.listdir(RPS_DATA_DIR) if f.startswith('rps_rank_')])
-        if len(files) >= 1: # 只要有文件就行，最近的一个不是今天就是昨天（如果今天还没生成）
+        if len(files) >= 1:
              # 排除今天生成的文件(如果已存在)
              current_filename = f"rps_rank_{datetime.date.today().strftime('%Y%m%d')}.csv"
              history_files = [f for f in files if f != current_filename]
              
              if history_files:
-                 last_file = history_files[-1] # 最近的历史文件
+                 last_file = history_files[-1]
                  prev_df = pd.read_csv(os.path.join(RPS_DATA_DIR, last_file))
                  # 创建 代码->RPS 映射
                  prev_rps_map = dict(zip(prev_df['代码'].astype(str).str.zfill(6), prev_df['RPS']))
@@ -247,8 +281,16 @@ def run_updater():
     logger.info(f"   总耗时: {total_time:.1f} 秒 ({total_time/60:.1f} 分钟)")
     
     logger.info("\n📈 RPS 强度前 15 名:")
-    print_df = rps_df[['代码', '名称', 'RPS', '板块', '板块RPS', 'RPS变动']].head(15)
+    print_df = rps_df[['代码', '名称', 'RPS', 'RPS20', '板块', '板块RPS', 'RPS变动', '弱转强']].head(15)
     logger.info(print_df.to_string(index=False))
+    
+    # v2.4.1: 显示弱转强信号股
+    weak_to_strong_stocks = rps_df[rps_df['弱转强'] == True].head(10)
+    if not weak_to_strong_stocks.empty:
+        logger.info("\n🚀 弱转强信号股 (RPS120弱但RPS20突然走强):")
+        wts_df = weak_to_strong_stocks[['代码', '名称', 'RPS', 'RPS20', '板块']]
+        logger.info(wts_df.to_string(index=False))
+    
     logger.info("=" * 60)
     
     return rps_df

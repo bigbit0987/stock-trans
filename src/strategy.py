@@ -59,9 +59,12 @@ def check_ma5_condition(
 def check_prev_day_condition(prev_close: float, prev_open: float, prev_pct: float) -> bool:
     """
     检查前一天条件（小阳线）
+    使用配置文件中的阈值
     """
     is_red = prev_close > prev_open
-    is_small = 0 < prev_pct < 5
+    pct_min = STRATEGY.get('prev_day_pct_min', 0)
+    pct_max = STRATEGY.get('prev_day_pct_max', 5)
+    is_small = pct_min < prev_pct < pct_max
     return is_red and is_small
 
 
