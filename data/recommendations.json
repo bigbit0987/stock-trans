@@ -2,10 +2,24 @@
   "2026-01-08": {
     "stocks": [
       {
-        "code": "688543",
-        "name": "国科军工",
-        "price": 62.17,
-        "rps": 71.9,
+        "code": "002261",
+        "name": "拓维信息",
+        "price": 34.42,
+        "rps": 80.5,
+        "category": "💎 板块龙头",
+        "suggestion": "板块内领先，关注板块轮动机会",
+        "day1_price": null,
+        "day1_pnl": null,
+        "day3_price": null,
+        "day3_pnl": null,
+        "day5_price": null,
+        "day5_pnl": null
+      },
+      {
+        "code": "300719",
+        "name": "安达维尔",
+        "price": 18.24,
+        "rps": 55.0,
         "category": "📊 稳健向上",
         "suggestion": "RPS上升中，次日冲高可走",
         "day1_price": null,
@@ -16,26 +30,12 @@
         "day5_pnl": null
       },
       {
-        "code": "300503",
-        "name": "昊志机电",
-        "price": 60.63,
-        "rps": 99.4,
-        "category": "⭐ 双强核心",
-        "suggestion": "市场+板块双强，可多拿几天，跌破5日线止损",
-        "day1_price": null,
-        "day1_pnl": null,
-        "day3_price": null,
-        "day3_pnl": null,
-        "day5_price": null,
-        "day5_pnl": null
-      },
-      {
-        "code": "002527",
-        "name": "新时达",
-        "price": 16.92,
-        "rps": 54.2,
-        "category": "📊 稳健向上",
-        "suggestion": "RPS上升中，次日冲高可走",
+        "code": "300192",
+        "name": "科德教育",
+        "price": 22.03,
+        "rps": 72.1,
+        "category": "📊 稳健标的",
+        "suggestion": "次日冲高即走，赚个稳妥",
         "day1_price": null,
         "day1_pnl": null,
         "day3_price": null,
@@ -44,6 +44,6 @@
         "day5_pnl": null
       }
     ],
-    "recorded_at": "2026-01-08T11:37:37.708368"
+    "recorded_at": "2026-01-08T13:42:05.443635"
   }
 }

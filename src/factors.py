@@ -750,3 +750,221 @@ if __name__ == "__main__":
     print("\n热门板块:")
     for s in get_hot_sectors(5):
         print(f"  {s['rank']}. {s['name']} {s['change']:+.2f}%")
+
+
+# ============================================
+# 6. 板块效应统计 (v2.4 新增)
+# ============================================
+
+def analyze_sector_cluster(stocks: List[Dict]) -> Dict:
+    """
+    分析选股结果中的板块聚类效应 (v2.4 新增)
+    
+    策略报告建议:
+    如果选出的股票中有多只属于同一板块，说明该板块具备共识，
+    这些票的胜率会远高于其他杂毛股票。
+    
+    Args:
+        stocks: 选股结果列表，每个包含 '代码', '名称', '板块' 等字段
+    
+    Returns:
+        {
+            'cluster_found': bool,       # 是否发现板块聚类
+            'dominant_sector': str,      # 主导板块名称
+            'dominant_count': int,       # 主导板块股票数量
+            'sector_distribution': dict, # 各板块分布 {板块名: [股票列表]}
+            'recommendation': str,       # 操作建议
+        }
+    """
+    if not stocks:
+        return {'cluster_found': False, 'recommendation': '无数据'}
+    
+    # 统计各板块的股票
+    sector_map: Dict[str, List[Dict]] = {}
+    
+    for s in stocks:
+        sector = s.get('板块', '') or s.get('sector', '')
+        if not sector:
+            sector = '未知板块'
+        
+        if sector not in sector_map:
+            sector_map[sector] = []
+        sector_map[sector].append({
+            'code': s.get('代码', ''),
+            'name': s.get('名称', ''),
+            'rps': s.get('RPS', 0),
+            'score': s.get('total_score', 0),
+        })
+    
+    # 按股票数量排序
+    sorted_sectors = sorted(sector_map.items(), key=lambda x: len(x[1]), reverse=True)
+    
+    # 判断是否存在板块聚类
+    total_stocks = len(stocks)
+    dominant_sector, dominant_stocks = sorted_sectors[0] if sorted_sectors else ('', [])
+    dominant_count = len(dominant_stocks)
+    
+    # 聚类判定：某板块占比超过30%或数量>=3
+    cluster_found = dominant_count >= 3 or (dominant_count >= 2 and dominant_count / total_stocks >= 0.3)
+    
+    # 生成建议
+    if cluster_found:
+        recommendation = f"🎯 板块共振！{dominant_sector} 板块有 {dominant_count} 只股票入选，这些票的胜率更高，可重点关注"
+    else:
+        recommendation = "📊 个股分散，无明显板块聚类"
+    
+    return {
+        'cluster_found': cluster_found,
+        'dominant_sector': dominant_sector,
+        'dominant_count': dominant_count,
+        'sector_distribution': dict(sorted_sectors),
+        'recommendation': recommendation,
+    }
+
+
+def print_sector_cluster_report(stocks: List[Dict]):
+    """打印板块聚类分析报告"""
+    result = analyze_sector_cluster(stocks)
+    
+    logger.info("")
+    logger.info("=" * 60)
+    logger.info("📊 板块效应分析 (v2.4)")
+    logger.info("=" * 60)
+    
+    if result['cluster_found']:
+        logger.info(f"   🎯 发现板块共振！")
+        logger.info(f"   主导板块: {result['dominant_sector']} ({result['dominant_count']} 只)")
+        
+        # 展示主导板块中的股票
+        dominant_stocks = result['sector_distribution'].get(result['dominant_sector'], [])
+        for s in dominant_stocks:
+            logger.info(f"      - {s['code']} {s['name']} | RPS={s['rps']:.1f}")
+    else:
+        logger.info(f"   📊 无明显板块聚类")
+    
+    # 展示板块分布
+    logger.info(f"\n   板块分布:")
+    for sector, stocks_in_sector in result['sector_distribution'].items():
+        if sector != '未知板块':
+            logger.info(f"      {sector}: {len(stocks_in_sector)} 只")
+    
+    logger.info(f"\n   💡 {result['recommendation']}")
+    logger.info("=" * 60)
+    
+    return result
+
+
+# ============================================
+# 7. 大盘总开关 (v2.4 增强)
+# ============================================
+
+def should_stop_trading() -> Tuple[bool, str]:
+    """
+    大盘总开关：检查是否应该停止交易 (v2.4)
+    
+    策略报告建议:
+    在熊市里，最好的操作是空仓。系统需要一个"总开关"来抑制
+    在系统性风险下的开仓冲动。
+    
+    Returns:
+        (should_stop: bool, reason: str)
+    """
+    try:
+        from config import MARKET_RISK_CONTROL
+        
+        # 获取大盘状态
+        market_cond = get_market_condition()
+        
+        # 检查总开关是否启用
+        if not MARKET_RISK_CONTROL.get('enabled', True):
+            return False, "大盘风控已禁用"
+        
+        # 1. 检查大盘是否在20日均线之下
+        if not market_cond.get('above_ma20', True):
+            action = MARKET_RISK_CONTROL.get('below_ma20_action', 'warn')
+            if action == 'stop':
+                return True, f"大盘跌破20日均线（空头趋势），建议停止交易"
+        
+        # 2. 检查大盘是否急跌
+        drop_threshold = MARKET_RISK_CONTROL.get('index_drop_threshold', -2.0)
+        if market_cond.get('index_change', 0) < drop_threshold:
+            return True, f"大盘急跌 {market_cond.get('index_change'):.2f}%，建议停止交易"
+        
+        # 3. 检查休眠模式
+        sleep_mode = MARKET_RISK_CONTROL.get('sleep_mode', {})
+        if sleep_mode.get('enabled', False):
+            trigger = sleep_mode.get('trigger', 'below_ma20')
+            if trigger == 'below_ma20' and not market_cond.get('above_ma20', True):
+                return True, "触发休眠模式：大盘在20日均线之下"
+        
+        # 4. 综合检查
+        if not market_cond.get('safe', True):
+            return True, market_cond.get('suggestion', '市场风险较高')
+        
+        return False, "大盘状态正常，可以交易"
+        
+    except Exception as e:
+        logger.error(f"大盘总开关检查失败: {e}")
+        # 出错时保守处理，返回停止交易
+        return True, f"大盘检查异常: {e}"
+
+
+def check_market_and_decide() -> Dict:
+    """
+    综合检查大盘状态并给出交易决策 (v2.4)
+    
+    Returns:
+        {
+            'can_trade': bool,       # 是否可以交易
+            'risk_level': str,       # 风险等级 (low/medium/high/extreme)
+            'position_ratio': float, # 建议仓位比例 (0-1)
+            'reason': str,           # 原因说明
+        }
+    """
+    try:
+        market_cond = get_market_condition()
+        
+        should_stop, reason = should_stop_trading()
+        
+        if should_stop:
+            return {
+                'can_trade': False,
+                'risk_level': 'extreme',
+                'position_ratio': 0,
+                'reason': reason,
+            }
+        
+        # 根据大盘状态调整仓位比例
+        if market_cond.get('above_ma20') and market_cond.get('above_ma10'):
+            # 上升趋势
+            return {
+                'can_trade': True,
+                'risk_level': 'low',
+                'position_ratio': 1.0,
+                'reason': '大盘上升趋势，可正常交易',
+            }
+        elif market_cond.get('above_ma20'):
+            # 震荡偏强
+            return {
+                'can_trade': True,
+                'risk_level': 'medium',
+                'position_ratio': 0.7,
+                'reason': '大盘震荡，建议减少仓位30%',
+            }
+        else:
+            # 下降趋势但未触发停止
+            return {
+                'can_trade': True,
+                'risk_level': 'high',
+                'position_ratio': 0.5,
+                'reason': '大盘偏弱，建议轻仓操作',
+            }
+            
+    except Exception as e:
+        logger.error(f"交易决策检查失败: {e}")
+        return {
+            'can_trade': False,
+            'risk_level': 'extreme',
+            'position_ratio': 0,
+            'reason': f'检查异常: {e}',
+        }

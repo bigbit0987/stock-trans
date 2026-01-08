@@ -433,6 +433,15 @@ def run_scan():
     logger.info(print_df.to_string(index=False))
     logger.info("=" * 60)
     
+    # =========================================
+    # 板块效应分析 (v2.4 新增)
+    # =========================================
+    try:
+        from src.factors import print_sector_cluster_report
+        print_sector_cluster_report(signals)
+    except Exception as e:
+        logger.warning(f"板块效应分析失败: {e}")
+    
     # 自动记录推荐用于效果追踪
     try:
         from src.tasks.performance_tracker import record_daily_recommendations

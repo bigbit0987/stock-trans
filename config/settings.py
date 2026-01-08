@@ -54,6 +54,43 @@ STRATEGY = {
     # RPS 筛选
     'rps_min': 40,              # 最低 RPS 评分
     'rps_window': 120,          # RPS 计算周期（天）
+    'rps_short_window': 20,     # v2.4: 短期RPS周期（捕捉短期爆发）
+}
+
+
+# ============================================
+# 量价策略配置 (v2.4 新增)
+# 策略报告关键改进点：区分"缩量蓄势"与"放量滞涨"
+# ============================================
+VOLUME_PRICE_STRATEGY = {
+    # 是否启用量价协同判断
+    'enabled': True,
+    
+    # 放量滞涨判定阈值
+    'stagnant_volume': {
+        'max_pct_change': 1.0,       # 涨幅小于1%
+        'min_volume_ratio': 2.5,     # 量比大于2.5
+        'action': 'warn',            # 'filter'=过滤掉, 'warn'=标注警告, 'downgrade'=降级
+    },
+    
+    # 缩量蓄势判定阈值
+    'shrinking_volume': {
+        'max_pct_change': 3.0,       # 涨幅在0-3%
+        'max_volume_ratio': 1.0,     # 量比小于1.0
+        'bonus_score': 15,           # 额外加分
+    },
+    
+    # 健康放量上涨阈值
+    'healthy_volume': {
+        'min_pct_change': 2.0,       # 涨幅大于2%
+        'volume_ratio_range': [1.2, 2.5],  # 量比在1.2-2.5之间
+    },
+    
+    # 极度缩量警告
+    'extremely_low_volume': {
+        'max_volume_ratio': 0.5,     # 量比小于0.5
+        'action': 'warn',            # 流动性风险警告
+    },
 }
 
 

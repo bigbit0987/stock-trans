@@ -1,7 +1,10 @@
 #!/usr/bin/env python
 """
-数据获取模块 - 优化版
-支持缓存、重试、批量获取
+数据获取模块 (v2.4 增强版)
+功能:
+1. 智能缓存 + 批量获取
+2. tenacity 指数退避重试（网络鲁棒性）
+3. 日期校验（防止 MA5 等指标的未来函数错误）
 """
 import akshare as ak
 import pandas as pd
@@ -10,28 +13,59 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional, List, Dict, Callable
 
+# tenacity 重试库
+try:
+    from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+    HAS_TENACITY = True
+except ImportError:
+    HAS_TENACITY = False
+
 # 导入配置
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import STRATEGY, RPS_DATA_DIR, CONCURRENT, NETWORK, CACHE
 from src.cache_manager import cache_manager
-from src.utils import logger
+from src.utils import logger, ensure_history_excludes_today
 
+
+# ============================================
+# 智能重试装饰器 (v2.4 tenacity 增强版)
+# ============================================
 
 def retry_on_failure(max_retries: int = 3, delay: float = 0.5):
-    """重试装饰器"""
+    """
+    智能重试装饰器
+    
+    v2.4 增强:
+    - 使用 tenacity 实现更专业的指数退避
+    - 自动识别可重试的异常类型
+    - 超时保护
+    """
     def decorator(func):
-        def wrapper(*args, **kwargs):
-            last_exception = None
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    last_exception = e
-                    if attempt < max_retries - 1:
-                        time.sleep(delay * (attempt + 1))  # 指数退避
-            return None
-        return wrapper
+        if HAS_TENACITY:
+            # 使用 tenacity 的指数退避重试
+            @retry(
+                stop=stop_after_attempt(max_retries),
+                wait=wait_exponential(multiplier=delay, min=0.5, max=10),
+                retry=retry_if_exception_type((ConnectionError, TimeoutError, OSError)),
+                reraise=True
+            )
+            def wrapper(*args, **kwargs):
+                return func(*args, **kwargs)
+            return wrapper
+        else:
+            # 降级使用简单重试
+            def wrapper(*args, **kwargs):
+                last_exception = None
+                for attempt in range(max_retries):
+                    try:
+                        return func(*args, **kwargs)
+                    except Exception as e:
+                        last_exception = e
+                        if attempt < max_retries - 1:
+                            time.sleep(delay * (attempt + 1))  # 指数退避
+                return None
+            return wrapper
     return decorator
 
 
@@ -64,39 +98,64 @@ def get_realtime_quotes() -> pd.DataFrame:
 
 @retry_on_failure(max_retries=NETWORK.get('max_retries', 3), delay=NETWORK.get('retry_delay', 0.5))
 def _fetch_stock_history_from_api(code: str, days: int = 150, adjust: str = "qfq") -> Optional[pd.DataFrame]:
-    """从API获取股票历史数据（带重试）"""
+    """
+    从API获取股票历史数据（带重试）
+    
+    v2.4 增强: 使用 tenacity 指数退避重试
+    """
     df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust=adjust)
     if df is None or len(df) < days:
         return None
     return df.tail(days + 10)
 
 
-def get_stock_history(code: str, days: int = 30, adjust: str = "qfq", use_cache: bool = True) -> Optional[pd.DataFrame]:
+def get_stock_history(
+    code: str, 
+    days: int = 30, 
+    adjust: str = "qfq", 
+    use_cache: bool = True,
+    exclude_today: bool = True  # v2.4 新增: 是否排除今日数据
+) -> Optional[pd.DataFrame]:
     """
-    获取单只股票的历史数据（带缓存）
+    获取单只股票的历史数据（带缓存 + 日期校验）
     
     Args:
         code: 股票代码
         days: 获取天数
         adjust: 复权类型 (qfq=前复权, hfq=后复权, ""=不复权)
         use_cache: 是否使用缓存
+        exclude_today: 是否排除今日数据（防止 MA5 等指标计算错误）
+    
+    v2.4 增强:
+    - 自动排除今日数据，避免 MA5 计算时的"未来函数"错误
+    - 使用 tenacity 增强网络重试
     """
     # 1. 尝试从缓存获取
     if use_cache and CACHE.get('enabled', True):
         cached = cache_manager.get_cached_history(code, days)
         if cached is not None and len(cached) >= days:
-            return cached.tail(days + 10)
+            df = cached.tail(days + 10)
+            # v2.4: 日期校验，排除今日
+            if exclude_today:
+                df = ensure_history_excludes_today(df)
+            return df
     
     # 2. 从API获取
     try:
         df = _fetch_stock_history_from_api(code, days, adjust)
         
-        if df is not None and use_cache:
-            # 保存到缓存
-            cache_manager.save_history_cache(code, df)
+        if df is not None:
+            # v2.4: 日期校验，排除今日
+            if exclude_today:
+                df = ensure_history_excludes_today(df)
+            
+            if use_cache:
+                # 保存到缓存（保存原始数据，不含今日校验）
+                cache_manager.save_history_cache(code, df)
         
         return df
     except Exception as e:
+        logger.debug(f"获取 {code} 历史数据失败: {e}")
         return None
 
 

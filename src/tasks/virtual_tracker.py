@@ -1,11 +1,14 @@
 #!/usr/bin/env python
 """
-虚拟持仓追踪模块 (Virtual Position Tracker)
+虚拟持仓追踪模块 (Virtual Position Tracker) v2.4
 功能：
 1. 自动将推荐股票加入"虚拟持仓"进行追踪
 2. 结合技术指标判断卖点
 3. 自动记录涨跌结果
 4. 用于验证策略效果，无需真正买入
+
+v2.4 改进:
+- 使用带锁的 JSON 读写器，解决并发写入冲突
 """
 import os
 import sys
@@ -20,7 +23,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 import akshare as ak
 from config import REALTIME_MONITOR
-from src.utils import logger
+from src.utils import logger, safe_read_json, safe_write_json
 
 
 # 虚拟持仓文件
@@ -30,39 +33,23 @@ VIRTUAL_TRADES_FILE = os.path.join(PROJECT_ROOT, "data", "virtual_trades.json")
 
 
 def load_virtual_positions() -> Dict:
-    """加载虚拟持仓"""
-    if os.path.exists(VIRTUAL_POSITIONS_FILE):
-        try:
-            with open(VIRTUAL_POSITIONS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return {}
-    return {}
+    """加载虚拟持仓 (v2.4: 使用带锁读取)"""
+    return safe_read_json(VIRTUAL_POSITIONS_FILE, default={})
 
 
 def save_virtual_positions(positions: Dict):
-    """保存虚拟持仓"""
-    os.makedirs(os.path.dirname(VIRTUAL_POSITIONS_FILE), exist_ok=True)
-    with open(VIRTUAL_POSITIONS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(positions, f, ensure_ascii=False, indent=2)
+    """保存虚拟持仓 (v2.4: 使用带锁写入)"""
+    safe_write_json(VIRTUAL_POSITIONS_FILE, positions)
 
 
 def load_virtual_trades() -> List[Dict]:
-    """加载虚拟交易记录"""
-    if os.path.exists(VIRTUAL_TRADES_FILE):
-        try:
-            with open(VIRTUAL_TRADES_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return []
-    return []
+    """加载虚拟交易记录 (v2.4: 使用带锁读取)"""
+    return safe_read_json(VIRTUAL_TRADES_FILE, default=[])
 
 
 def save_virtual_trades(trades: List[Dict]):
-    """保存虚拟交易记录"""
-    os.makedirs(os.path.dirname(VIRTUAL_TRADES_FILE), exist_ok=True)
-    with open(VIRTUAL_TRADES_FILE, 'w', encoding='utf-8') as f:
-        json.dump(trades, f, ensure_ascii=False, indent=2)
+    """保存虚拟交易记录 (v2.4: 使用带锁写入)"""
+    safe_write_json(VIRTUAL_TRADES_FILE, trades)
 
 
 def add_recommendations_to_virtual(stocks: List[Dict]):
