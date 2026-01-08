@@ -29,6 +29,8 @@ ENV/
 # ============================================
 # 持仓和交易记录
 data/holdings.json
+data/virtual_positions.json
+data/virtual_trades.json
 data/trade_history.csv
 data/backup/
 

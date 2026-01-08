@@ -272,7 +272,7 @@ def cmd_daily(args):
     logger.info("="*50)
     
     # 1. 更新 RPS 数据
-    logger.info("\n[1/3] 📊 更新 RPS 数据...")
+    logger.info("\n[1/4] 📊 更新 RPS 数据...")
     try:
         from src.tasks.updater import run_updater
         run_updater()
@@ -280,7 +280,7 @@ def cmd_daily(args):
         logger.error(f"RPS 更新失败: {e}")
     
     # 2. 尾盘扫描
-    logger.info("\n[2/3] 🔍 执行尾盘选股扫描...")
+    logger.info("\n[2/4] 🔍 执行尾盘选股扫描...")
     try:
         from src.tasks.scanner import run_scan
         from src.notifier import notify_stock_signals
@@ -292,7 +292,7 @@ def cmd_daily(args):
         logger.error(f"选股扫描失败: {e}")
     
     # 3. 持仓巡检
-    logger.info("\n[3/3] 📋 执行持仓健康巡检...")
+    logger.info("\n[3/4] 📋 执行持仓健康巡检...")
     try:
         from src.tasks.portfolio import daily_check
         from src.notifier import notify_position_alert
@@ -302,6 +302,21 @@ def cmd_daily(args):
             logger.info("📱 预警已推送")
     except Exception as e:
         logger.error(f"持仓巡检失败: {e}")
+    
+    # 4. 虚拟持仓卖点监控 (模拟操作追踪)
+    logger.info("\n[4/4] 📡 执行虚拟持仓卖点监控...")
+    try:
+        from src.tasks.virtual_tracker import run_virtual_monitor, format_virtual_signal_message
+        from src.notifier import notify_all
+        sell_signals = run_virtual_monitor()
+        if sell_signals:
+            message = format_virtual_signal_message(sell_signals)
+            notify_all("📡 虚拟持仓卖点信号", message)
+            logger.info(f"📱 {len(sell_signals)} 个卖点信号已推送")
+        else:
+            logger.info("   暂无卖点信号")
+    except Exception as e:
+        logger.error(f"虚拟持仓监控失败: {e}")
     
     logger.info("\n" + "="*50)
     logger.info("✅ 今日任务处理完成!")
