@@ -324,28 +324,27 @@ source .venv/bin/activate && ./run_daily.sh
 ## 📝 更新日志
 
 - **v2.5.1** (2026-01-09): 🔧 架构深度优化版 (当前版本)
-  - **紧急 Bug 修复**
-    - 修复 `realtime_monitor.py` 中 `kwargs` 未定义导致的运行时崩溃
-    - 恢复 `safe_read_json`/`safe_write_json` 函数，修复提醒历史功能
+  - **代码全面重构**
+    - **数据层标准化**：`data_loader.py` 统一输出英文键 (`code`, `name`, `close`, `pct_change`...)
+    - **RPS 加载层映射**：`load_latest_rps()` 增加列名标准化，确保内部数据流全英文
+    - **指标层解耦**：MA5 计算从 `strategy.py` 下沉至 `indicators.py`，实现职责分离
+    - **去中文化完成**：`scanner`, `strategy`, `factors`, `notifier`, `virtual_tracker` 全面适配英文键
   - **存储层统一**
-    - `premarket.py` 集合竞价模块迁移至 SQLite 读取持仓
-    - 移除对 `holdings.json` 的直接读取依赖
+    - 移除 `safe_read_json`/`safe_write_json`，彻底迁移至 SQLite
+    - `Database` 类实现**单例模式**，避免多线程连接泄漏
+    - 新增 `check_write_permission()` 方法，环境自检更可靠
+    - 删除废弃文件：`holdings.json`, `alert_history.json`, `recommendations.json`
   - **性能与稳定性**
-    - **尾盘数据延迟获取**：将 `get_tail_volume_ratio` 从主扫描循环移至前 10 名二次确认阶段，避免高频 API 调用导致 IP 封禁
-    - **SQLite 写入优化**：添加 `PRAGMA synchronous=NORMAL`，提升实时监控频繁更新性能
-    - **环境自检增强**：`main.py` 新增 SQLite 数据库读写权限检查，防止生产环境权限问题
+    - **尾盘数据延迟获取**：`get_tail_volume_ratio` 从主循环移至前 10 名二次确认阶段，避免 IP 封禁
+    - **尾盘意图识别**：区分吸筹 (量增价涨) 与砸盘 (量增价跌)，精准评分
   - **Market Breadth 渐进式风控**
     - 市场宽度 `≥8%`：正常交易
     - 市场宽度 `4%-8%`：单笔金额自动减半
-    - 市场宽度 `<4%`：触发休眠模式，停止选股并推送通知
-  - **尾盘吸筹判断增强**
-    - 放量 + 当日涨价 = ✨ 真吸筹，评分加分
-    - 放量 + 当日跌价 = ⚠️ 出货嫌疑，评分减分
-    - 放量 + 滞涨 = 中性标记
-  - **评级差异化参数**
-    - Grade A (趋势核心)：ATR 2 倍，回撤容忍 -5%
-    - Grade B (普通)：ATR 1.5 倍，回撤容忍 -3%
-    - Grade C (稳健)：ATR 1.2 倍，回撤容忍 -2.5%
+    - 市场宽度 `<4%`：触发**休眠模式**，停止选股并推送通知
+  - **评级差异化执行**
+    - Grade A (趋势核心)：ATR 2.0 倍止损，回撤容忍 -5%
+    - Grade B (普通)：ATR 1.5 倍止损，回撤容忍 -3%
+    - Grade C (稳健)：ATR 1.2 倍止损，回撤容忍 -2.5%，**2 日内利润不足 3%触发时间止损**
 - **v2.4** (2026-01-08): 🛡️ 稳如泰山版
   - **架构稳定性升级**
     - **API 鲁棒性**: 引入 `tenacity` 实现指数退避重试，大幅降低网络波动导致的数据获取失败。
