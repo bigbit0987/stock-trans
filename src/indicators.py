@@ -7,7 +7,33 @@ import numpy as np
 from typing import Optional, List, Dict
 import os
 import json
+from config import STRATEGY
 from datetime import datetime
+
+
+def calculate_ma5_condition(
+    current_price: float, 
+    hist_closes: List[float]
+) -> tuple:
+    """
+    检查 MA5 条件
+    
+    Returns:
+        (是否满足, MA5值, 乖离率)
+    """
+    if len(hist_closes) < 4:
+        return False, 0, 1
+    
+    # 计算实时 MA5
+    ma5 = (sum(hist_closes[-4:]) + current_price) / 5
+    
+    # 计算乖离率
+    bias = abs(current_price - ma5) / ma5
+    
+    # 获取阈值 (默认为 0.015 即 1.5%)
+    bias_threshold = STRATEGY.get('ma5_bias_max', 0.015)
+    
+    return bias <= bias_threshold, ma5, bias
 
 
 
@@ -130,32 +156,30 @@ def get_grade_based_stop_params(grade: str = 'B') -> Dict:
 # 凯利公式仓位管理 - v2.3 新增
 # ============================================
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TRADE_HISTORY_FILE = os.path.join(PROJECT_ROOT, "data", "virtual_trades.json")
-
+from src.database import db
 
 def load_recent_trades(days: int = 30) -> List[Dict]:
-    """加载最近N天的交易记录"""
-    if not os.path.exists(TRADE_HISTORY_FILE):
-        return []
-    
+    """加载最近N天的交易记录 (v2.5.1: 迁移至 SQLite)"""
     try:
-        with open(TRADE_HISTORY_FILE, 'r', encoding='utf-8') as f:
-            trades = json.load(f)
+        trades = db.get_virtual_trade_history()
         
         # 过滤最近N天
-        cutoff = datetime.now().timestamp() - days * 24 * 3600
+        now = datetime.now()
+        cutoff = now.timestamp() - days * 24 * 3600
         recent = []
         for t in trades:
             try:
-                trade_date = datetime.strptime(t['sell_date'][:10], '%Y-%m-%d')
+                # 数据库中的 sell_date 格式通常为 '2026-01-09 15:00'
+                sell_date_str = t.get('sell_date', '')[:10]
+                trade_date = datetime.strptime(sell_date_str, '%Y-%m-%d')
                 if trade_date.timestamp() >= cutoff:
                     recent.append(t)
             except (KeyError, ValueError, TypeError):
-                # 跳过格式不正确的交易记录
                 continue
         return recent
-    except (json.JSONDecodeError, IOError) as e:
+    except Exception as e:
+        from src.utils import logger
+        logger.error(f"加载最近交易记录失败: {e}")
         return []
 
 

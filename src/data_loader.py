@@ -37,6 +37,7 @@ REALTIME_COL_MAP = {
     '名称': 'name',
     '最新价': 'close',
     '今开': 'open',
+    '昨收': 'prev_close',
     '最高': 'high',
     '最低': 'low',
     '成交量': 'volume',
@@ -133,60 +134,53 @@ def get_realtime_quotes() -> pd.DataFrame:
     # 标准化列名
     df = standardize_df(df, REALTIME_COL_MAP)
     
-    # ---【v2.5.0 兼容性增强：保留中文索引副本】---
-    # 这样既能让旧代码跑通，又能让新逻辑使用英文标准列
-    compat_map = {v: k for k, v in REALTIME_COL_MAP.items()}
-    for eng, chn in compat_map.items():
-        if eng in df.columns:
-            df[chn] = df[eng]
-    
-    # 补充计算字段的标准化映射
+    # 补充计算字段的标准化映射 (v2.5.1: 移除中文别名，采用纯英文标准)
     if 'high' in df.columns and 'low' in df.columns and 'close' in df.columns:
         df['amplitude'] = (df['high'] - df['low']) / df['close'].shift(1).fillna(df['open'])
-        df['振幅'] = df['amplitude']
         df['is_up'] = df['close'] > df['open']
-        df['是阳线'] = df['is_up']
     
     logger.info(f"   获取到 {len(df)} 只股票")
     return df
 
 
 @retry_on_failure(max_retries=NETWORK.get('max_retries', 3), delay=NETWORK.get('retry_delay', 0.5))
-def get_tail_volume_ratio(code: str) -> float:
+def get_tail_volume_ratio(code: str) -> Dict[str, float]:
     """
-    计算尾盘 15 分钟成交量占比 (v2.5.0)
+    计算尾盘 15 分钟成交量占比及价格变动 (v2.5.1 增强)
     
     逻辑：
-    1. 获取当日 1 分钟数据
-    2. 计算 14:45 - 15:00 的成交量总和
-    3. 计算全天成交量总和
-    4. 返回比例
+    - 返回 ratio (%) 和 price_change (%)
+    - 用于识别真吸筹 (放量上涨) 或砸盘 (放量下跌)
     """
     try:
         df = ak.stock_zh_a_hist_min_em(symbol=code, period='1', adjust='qfq')
         if df is None or df.empty:
-            return 0.0
+            return {'ratio': 0.0, 'price_change': 0.0}
         
-        # 确保时间是字符串并过滤当日数据
-        today_str = datetime.datetime.now().strftime('%Y-%m-%d')
-        # 如果是夜间测试或非交易日，取最后一天
         last_date = df.iloc[-1]['时间'].split(' ')[0]
         df_today = df[df['时间'].str.startswith(last_date)]
         
         if df_today.empty:
-            return 0.0
+            return {'ratio': 0.0, 'price_change': 0.0}
             
         total_volume = df_today['成交量'].sum()
-        # 取最后 15 根 K 线
         tail_df = df_today.tail(15)
         tail_volume = tail_df['成交量'].sum()
         
-        if total_volume > 0:
-            return round(tail_volume / total_volume * 100, 2)
-        return 0.0
+        # 计算尾盘区间价格变动 (14:45 开盘价 vs 15:00 收盘价)
+        tail_start_price = tail_df.iloc[0]['开盘']
+        tail_end_price = tail_df.iloc[-1]['收盘']
+        tail_change = (tail_end_price - tail_start_price) / tail_start_price * 100 if tail_start_price > 0 else 0
+        
+        ratio = round(tail_volume / total_volume * 100, 2) if total_volume > 0 else 0.0
+        
+        return {
+            'ratio': ratio,
+            'price_change': round(tail_change, 2)
+        }
     except Exception as e:
         logger.debug(f"获取 {code} 尾盘数据失败: {e}")
-        return 0.0
+        return {'ratio': 0.0, 'price_change': 0.0}
 
 
 @retry_on_failure(max_retries=NETWORK.get('max_retries', 3), delay=NETWORK.get('retry_delay', 0.5))
@@ -342,7 +336,7 @@ def batch_get_history(
 
 
 def load_latest_rps() -> Optional[pd.DataFrame]:
-    """加载最新的 RPS 数据"""
+    """加载最新的 RPS 数据 (v2.5.1: 增加列名标准化)"""
     if not os.path.exists(RPS_DATA_DIR):
         return None
     
@@ -355,7 +349,23 @@ def load_latest_rps() -> Optional[pd.DataFrame]:
     
     logger.info(f"📖 加载 RPS 数据: {latest_file}")
     df = pd.read_csv(filepath)
-    df['代码'] = df['代码'].astype(str).str.zfill(6)
+    
+    # v2.5.1: RPS 文件列名标准化
+    RPS_COL_MAP = {
+        '代码': 'code',
+        '名称': 'name',
+        'RPS': 'rps',
+        'RPS20': 'rps20',
+        '板块RPS': 'sector_rps',
+        'RPS变动': 'rps_change',
+        '板块': 'sector',
+        '20日新高': 'is_20d_high',
+    }
+    df = df.rename(columns=RPS_COL_MAP)
+    
+    # 确保代码格式正确
+    if 'code' in df.columns:
+        df['code'] = df['code'].astype(str).str.zfill(6)
     
     return df
 

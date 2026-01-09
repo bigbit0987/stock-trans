@@ -8,6 +8,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config import STRATEGY, BLACKLIST
+from src.indicators import calculate_ma5_condition
 
 
 def filter_by_basic_conditions(df: pd.DataFrame) -> pd.DataFrame:
@@ -29,33 +30,13 @@ def filter_by_basic_conditions(df: pd.DataFrame) -> pd.DataFrame:
     
     # 应用黑名单过滤
     if BLACKLIST:
-        # 同时支持 code 或 代码 索引
-        col_code = 'code' if 'code' in result.columns else '代码'
+        col_code = 'code'
         result = result[~result[col_code].isin(BLACKLIST)]
     
     return result
 
 
-def check_ma5_condition(
-    current_price: float, 
-    hist_closes: List[float]
-) -> tuple:
-    """
-    检查 MA5 条件
-    
-    Returns:
-        (是否满足, MA5值, 乖离率)
-    """
-    if len(hist_closes) < 4:
-        return False, 0, 1
-    
-    # 计算实时 MA5
-    ma5 = (sum(hist_closes[-4:]) + current_price) / 5
-    
-    # 计算乖离率
-    bias = abs(current_price - ma5) / ma5
-    
-    return bias <= STRATEGY['ma5_bias_max'], ma5, bias
+# MA5 条件检查已迁移至 indicators.py
 
 
 def check_prev_day_condition(prev_close: float, prev_open: float, prev_pct: float) -> bool:
@@ -120,7 +101,7 @@ def generate_signal(
         信号字典，如果不符合条件返回 None
     """
     # 检查 MA5 条件
-    ma5_ok, ma5, bias = check_ma5_condition(current_price, hist_closes)
+    ma5_ok, ma5, bias = calculate_ma5_condition(current_price, hist_closes)
     if not ma5_ok:
         return None
     
@@ -161,28 +142,29 @@ def generate_signal(
         suggestion = "短周期转弱，注意高位退潮风险，逢高离场"
     
     result = {
-        '代码': code,
-        '名称': name,
-        '现价': current_price,
-        '涨幅%': round(pct_change, 2),
-        '换手%': round(turnover, 2),
-        '量比': round(volume_ratio, 2),
-        '振幅%': round(amplitude * 100, 2),
-        'MA5': round(ma5, 2),
-        '乖离%': round(bias * 100, 2),
-        '连阳': "✓" if prev_ok else "",
-        'RPS': round(rps, 1),
-        '板块RPS': round(sector_rps, 1),
-        'RPS变动': round(rps_change, 1),
-        '分类': category,
-        '建议': suggestion
+        'code': code,
+        'name': name,
+        'close': round(current_price, 2),
+        'pct_change': round(pct_change, 2),
+        'turnover': round(turnover, 2),
+        'volume_ratio': round(volume_ratio, 2),
+        'amplitude': round(amplitude * 100, 2),
+        'ma5': round(ma5, 2),
+        'bias': round(bias * 100, 2),
+        'consecutive_up': prev_ok,
+        'rps': round(rps, 1),
+        'sector_rps': round(sector_rps, 1),
+        'rps_change': round(rps_change, 1),
+        'rps20': round(rps20, 1), # v2.5.1: 增加短周期动量
+        'category': category,
+        'suggestion': suggestion
     }
     
     # v2.4: 添加量价信号信息
     # v2.5.0: 尾盘吸筹检测
     if tail_vol_ratio > 15:
-        result['量价形态'] = f"{result.get('量价形态', '')} ✨尾盘吸筹({tail_vol_ratio}%)".strip()
-        result['量价评分'] = result.get('量价评分', 50) + 15
+        result['pattern_desc'] = f"{result.get('pattern_desc', '')} ✨尾盘吸筹({tail_vol_ratio}%)".strip()
+        result['volume_score'] = result.get('volume_score', 50) + 15
     
     return result
 

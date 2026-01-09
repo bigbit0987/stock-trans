@@ -57,8 +57,8 @@ def check_market_risk(realtime_df: pd.DataFrame = None) -> tuple:
         else:
             market_df = ak.stock_zh_a_spot_em()
         
-        up_count = len(market_df[market_df['涨跌幅'] > 0])
-        down_count = len(market_df[market_df['涨跌幅'] < 0])
+        up_count = len(market_df[market_df['pct_change'] > 0])
+        down_count = len(market_df[market_df['pct_change'] < 0])
         total = up_count + down_count
         
         # 赚钱效应: 上涨家数占比
@@ -235,9 +235,9 @@ def run_scan():
     signals = []
     
     # 准备工作
-    codes = candidates['代码'].tolist()
-    names = candidates['名称'].tolist()
-    closes = candidates['最新价'].tolist()
+    codes = candidates['code'].tolist()
+    names = candidates['name'].tolist()
+    closes = candidates['close'].tolist()
     
     max_workers = CONCURRENT.get('max_workers', 10)
     
@@ -245,13 +245,13 @@ def run_scan():
         # 准备数据字典，方便线程中使用
         stock_data_map = {}
         for _, row in candidates.iterrows():
-            stock_data_map[row['代码']] = {
-                'name': row['名称'],
-                'current_close': row['最新价'],
-                'pct_change': row['涨跌幅'],
-                'turnover': row['换手率'],
-                'volume_ratio': row['量比'],
-                'amplitude': row['振幅']
+            stock_data_map[row['code']] = {
+                'name': row['name'],
+                'current_close': row['close'],
+                'pct_change': row['pct_change'],
+                'turnover': row['turnover'],
+                'volume_ratio': row['volume_ratio'],
+                'amplitude': row['amplitude']
             }
 
         # v2.5.1: 只获取历史数据，尾盘数据延迟到前10名确认阶段
@@ -285,33 +285,33 @@ def run_scan():
                     sector_name = ''  # 板块名称，用于板块滤网
                     
                     if has_rps:
-                        rps_row = rps_df[rps_df['代码'] == code]
+                        rps_row = rps_df[rps_df['code'] == code]
                         if not rps_row.empty:
                             row_data = rps_row.iloc[0]
                             # 使用 pd.notna 检查空值，确保不会传递 NaN
-                            rps_val = row_data.get('RPS', 0)
+                            rps_val = row_data.get('rps', 0)
                             rps_score = rps_val if pd.notna(rps_val) else 0
-                            sector_rps_val = row_data.get('板块RPS', 0)
+                            sector_rps_val = row_data.get('sector_rps', 0)
                             sector_rps = sector_rps_val if pd.notna(sector_rps_val) else 0
-                            rps_change_val = row_data.get('RPS变动', 0)
+                            rps_change_val = row_data.get('rps_change', 0)
                             rps_change = rps_change_val if pd.notna(rps_change_val) else 0
-                            sector_val = row_data.get('板块', '')
+                            sector_val = row_data.get('sector', '')
                             sector_name = sector_val if pd.notna(sector_val) else ''  # 获取板块名称
                             
                             # v2.5.0: 获取 RPS20 (短周期动量)
-                            rps20_val = row_data.get('RPS20', 0)
+                            rps20_val = row_data.get('rps20', 0)
                             rps20_score = rps20_val if pd.notna(rps20_val) else 0
                     
                     # 提取前一天数据 (hist 的最后一行通常是前一个交易日)
                     prev_day = hist.iloc[-1]
-                    prev_close = prev_day['收盘']
-                    prev_open = prev_day['开盘']
-                    prev_pct = prev_day['涨跌幅']
+                    prev_close = prev_day['close']
+                    prev_open = prev_day['open']
+                    prev_pct = prev_day['pct_change']
                     
-                    hist_closes = hist['收盘'].tolist()
+                    hist_closes = hist['close'].tolist()
                     
-                    # 获取历史成交量 (v2.4 支持)
-                    hist_volumes = hist['成交量'].tolist() if '成交量' in hist.columns else []
+                    # 获取历史成交量
+                    hist_volumes = hist['volume'].tolist() if 'volume' in hist.columns else []
                     
                     # 调用通用信号生成函数 (v2.5.1: 尾盘数据延迟获取)
                     strategy_result = generate_signal(
@@ -324,15 +324,15 @@ def run_scan():
                     
                     if strategy_result:
                         # 添加板块名称（用于板块滤网功能）
-                        strategy_result['板块'] = sector_name
+                        strategy_result['sector'] = sector_name
                         
                         # ---【计算建议仓位】---
                         target_amt = CAPITAL.get('target_amount_per_stock', 0)
                         if target_amt > 0:
                             # 为每只股票计算建议手数 (向下取整到 100 股)
-                            current_price = strategy_result['现价']
+                            current_price = strategy_result['close']
                             suggested_vol = int(target_amt / current_price / 100) * 100
-                            strategy_result['建议买入'] = f"{suggested_vol} 股"
+                            strategy_result['suggested_volume'] = f"{suggested_vol} 股"
                         
                         signals.append(strategy_result)
             except Exception as e:
@@ -448,49 +448,49 @@ def run_scan():
     if 'total_score' in results_df.columns:
         results_df = results_df.sort_values(by='total_score', ascending=False)
     else:
-        results_df = results_df.sort_values(by='RPS', ascending=False)
+        results_df = results_df.sort_values(by='rps', ascending=False)
     
     # =========================================
-    # v2.5.1: 前10名二次确认 - 获取尾盘吸筹数据
-    # 将高频 API 调用限制在精选范围内，避免 IP 封禁
+    # v2.5.1: 前10名二次确认 - 整合尾盘数据与筹码因子 (ASR)
+    # 限制高频 API 调用范围，保障账号安全
     # =========================================
     try:
-        top_codes = results_df.head(10)['代码'].tolist()
+        top_codes = results_df.head(10)['code'].tolist()
         if top_codes:
             logger.info(f"\n🔬 前10名二次确认: 获取尾盘吸筹数据...")
             
             for code in top_codes:
                 try:
-                    tail_ratio = get_tail_volume_ratio(code)
+                    idx = results_df[results_df['code'] == code].index
+                    if len(idx) == 0: continue
+                    idx_val = idx[0]
+                    
+                    # 1. 验证尾盘数据 (意图识别)
+                    tail_data = get_tail_volume_ratio(code)
+                    tail_ratio = tail_data['ratio']
+                    tail_change = tail_data['price_change']
+                    
                     if tail_ratio > 15:
-                        # v2.5.1: 获取当日涨跌幅判断真吸筹还是出货
-                        idx = results_df[results_df['代码'] == code].index
-                        if len(idx) > 0:
-                            pct_change = results_df.loc[idx[0], '涨幅%'] if '涨幅%' in results_df.columns else 0
-                            current_score = results_df.loc[idx[0], 'total_score'] if 'total_score' in results_df.columns else 0
-                            
-                            # 真吸筹: 尾盘放量 + 当日涨价
-                            # 出货嫌疑: 尾盘放量 + 当日跌价或滞涨
-                            if pct_change > 0.5:
-                                # 真吸筹信号
-                                results_df.loc[idx[0], '尾盘吸筹'] = f"✨{tail_ratio:.1f}%"
-                                if 'total_score' in results_df.columns:
-                                    bonus = min(tail_ratio / 2, 10)  # 最多加10分
-                                    results_df.loc[idx[0], 'total_score'] = current_score + bonus
-                                logger.info(f"   ✨ {code} 尾盘吸筹 {tail_ratio:.1f}% (涨幅{pct_change:.1f}%) → 加分")
-                            elif pct_change < -0.5:
-                                # 出货嫌疑
-                                results_df.loc[idx[0], '尾盘吸筹'] = f"⚠️{tail_ratio:.1f}%"
-                                if 'total_score' in results_df.columns:
-                                    penalty = min(tail_ratio / 3, 8)  # 最多减8分
-                                    results_df.loc[idx[0], 'total_score'] = current_score - penalty
-                                logger.warning(f"   ⚠️ {code} 尾盘放量但下跌 {tail_ratio:.1f}% (跌幅{pct_change:.1f}%) → 出货嫌疑")
-                            else:
-                                # 滞涨，不加分也不减分
-                                results_df.loc[idx[0], '尾盘吸筹'] = f"{tail_ratio:.1f}%"
-                                logger.info(f"   📊 {code} 尾盘放量 {tail_ratio:.1f}% (滞涨)")
+                        if tail_change > 0:
+                            # 意图识别：量增价稳/升 -> 积极吸筹
+                            results_df.loc[idx_val, 'remark'] = f"✨尾盘吸筹({tail_ratio:.0f}%, {tail_change:+.1f}%)"
+                            results_df.loc[idx_val, 'total_score'] += min(tail_ratio / 2, 10)
+                        elif tail_change < -0.5:
+                            # 意图识别：量增价跌 -> 尾盘砸盘/避险出逃
+                            results_df.loc[idx_val, 'remark'] = f"⚠️尾盘砸盘({tail_ratio:.0f}%, {tail_change:.1f}%)"
+                            results_df.loc[idx_val, 'total_score'] -= 8
+                        else:
+                            results_df.loc[idx_val, 'remark'] = f"📊尾盘异动({tail_ratio:.0f}%)"
+
+                    # 2. 验证筹码因子
+                    from src.factors import get_shareholder_change_score
+                    chip_info = get_shareholder_change_score(code)
+                    if chip_info['score'] > 60:
+                        existing = results_df.loc[idx_val, 'remark'] if 'remark' in results_df.columns and pd.notna(results_df.loc[idx_val, 'remark']) else ""
+                        results_df.loc[idx_val, 'remark'] = f"{existing} {chip_info['label']}".strip()
+                        results_df.loc[idx_val, 'total_score'] += 5
                 except Exception as e:
-                    logger.debug(f"获取 {code} 尾盘数据失败: {e}")
+                    logger.debug(f"二次验证失败 {code}: {e}")
             
             # 重新排序
             if 'total_score' in results_df.columns:

@@ -494,7 +494,20 @@ def daily_check():
             take_profit_alert = risk_params['take_profit']
             loss_attention = -5.0
             
-            if max_pnl > 10 and drawdown < drawdown_threshold:
+            # v2.5.1: Grade C 时间止损逻辑 (Time-Stop)
+            # Grade C 属于稳健/溢价型标的，若持有2个交易日仍未发力(收益<3%)，建议撤离以换取时间价值。
+            if grade == 'C' and days_held >= 2 and pnl < 3.0:
+                status = "🕒"
+                action = f"时间止停！{grade}级标的持有 {days_held} 天，盈亏 {pnl:.1f}% 未达预期(3%)"
+                alerts.append({
+                    'code': code,
+                    'name': name,
+                    'current': current,
+                    'ma5': ma5,
+                    'pnl': pnl,
+                    'action': action
+                })
+            elif max_pnl > 10 and drawdown < drawdown_threshold:
                 # 收益回撤判定
                 status = "🚨"
                 action = f"📉 回撤止盈警报！({grade}级, 最高浮盈 {max_pnl:.1f}% 后回撤 {drawdown:.1f}%)"

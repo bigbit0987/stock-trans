@@ -17,6 +17,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from src.utils import logger
 from src.database import db
+from src.data_loader import get_realtime_quotes
 
 # 从配置文件读取阈值
 try:
@@ -37,11 +38,8 @@ def load_holdings() -> dict:
     return db.get_holdings()
 
 def get_premarket_data():
-    try:
-        return ak.stock_zh_a_spot_em()
-    except Exception as e:
-        logger.error(f"⚠️ 获取集合竞价数据失败: {e}")
-        return None
+    """获取并标准化实时行情 (v2.5.1)"""
+    return get_realtime_quotes()
 
 def check_premarket():
     logger.info("=" * 60)
@@ -89,14 +87,14 @@ def check_premarket():
     alerts = []
     for code, info in holdings.items():
         name = info['name']
-        stock = df[df['代码'] == code]
+        stock = df[df['code'] == code]
         if stock.empty:
             logger.warning(f"  ⚠️ {code} {name}: 数据获取失败")
             continue
         
         stock = stock.iloc[0]
-        prev_close = stock['昨收']
-        open_price = stock['今开'] if stock['今开'] > 0 else stock['最新价']
+        prev_close = stock['prev_close']
+        open_price = stock['open'] if stock['open'] > 0 else stock['close']
         gap_pct = (open_price - prev_close) / prev_close * 100
         strategy = info.get('strategy', 'STABLE')
         

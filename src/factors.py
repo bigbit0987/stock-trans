@@ -202,7 +202,7 @@ def get_money_flow_rank(top_n: int = 100) -> pd.DataFrame:
     获取主力资金流入排行
     
     Returns:
-        DataFrame with columns: 代码, 名称, 主力净流入, 主力净流入占比
+        DataFrame with columns: code, name, main_inflow, main_inflow_pct
     """
     try:
         # 获取个股资金流排名
@@ -221,10 +221,10 @@ def get_money_flow_rank(top_n: int = 100) -> pd.DataFrame:
         
         # 标准化列名
         result = pd.DataFrame({
-            '代码': df['代码'].astype(str).str.zfill(6),
-            '名称': df['名称'],
-            '主力净流入': df['今日主力净流入-净额'],
-            '主力净流入占比': df['今日主力净流入-净占比'],
+            'code': df['代码'].astype(str).str.zfill(6),
+            'name': df['名称'],
+            'main_inflow': df['今日主力净流入-净额'],
+            'main_inflow_pct': df['今日主力净流入-净占比'],
         })
         
         return result
@@ -498,8 +498,54 @@ def get_stock_valuation(code: str) -> Dict:
 
 
 # ============================================
-# 5. 多因子综合评分
+# 5. 筹码因子 (v2.5.1 新增)
 # ============================================
+
+def get_shareholder_change_score(code: str) -> Dict:
+    """
+    计算股东人数变动评分 (筹码集中度辅助)
+    
+    逻辑：
+    - 股东人数减少 -> 筹码集中 -> 加分
+    - 股东人数增加 -> 筹码分散 -> 减分
+    """
+    try:
+        # 这个接口获取股东人数历史变动
+        df = ak.stock_zh_a_gdhs_detail_em(symbol=code)
+        if df is None or len(df) < 2:
+            return {'change_pct': 0, 'score': 50, 'label': '数据不足'}
+            
+        # 计算最新一期较上一期的变动幅度
+        latest = df.iloc[0]['股东人数']
+        prev = df.iloc[1]['股东人数']
+        
+        if prev > 0:
+            change_pct = (latest - prev) / prev * 100
+        else:
+            change_pct = 0
+            
+        # 评分逻辑
+        if change_pct < -5:
+            score = 90
+            label = f"✨筹码大幅集中({change_pct:.1f}%)"
+        elif change_pct < -2:
+            score = 75
+            label = f"📈筹码趋向集中({change_pct:.1f}%)"
+        elif change_pct > 5:
+            score = 30
+            label = f"⚠️筹码大幅分散({+change_pct:.1f}%)"
+        else:
+            score = 50
+            label = "持平"
+            
+        return {
+            'change_pct': round(change_pct, 2),
+            'score': score,
+            'label': label
+        }
+    except Exception as e:
+        logger.debug(f"获取 {code} 股东人数失败: {e}")
+        return {'change_pct': 0, 'score': 50, 'label': '查询失败'}
 
 def calculate_multi_factor_score(
     code: str,
@@ -643,7 +689,7 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
     money_flow_df = get_money_flow_rank(300)  # 获取更多数据
     money_inflow_set = set()  # 资金流入的股票
     if not money_flow_df.empty:
-        money_inflow_set = set(money_flow_df['代码'].tolist())
+        money_inflow_set = set(money_flow_df['code'].tolist())
     
     # 获取资金流出的股票（用于诱多检测）
     money_outflow_set = set()
@@ -697,9 +743,9 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
     trap_count = 0  # 诱多信号计数
     
     for s in stocks:
-        code = s.get('代码', '')
-        name = s.get('名称', '')
-        rps = s.get('RPS', 50)
+        code = s.get('code', '')
+        name = s.get('name', '')
+        rps = s.get('rps', 50)
         
         # --- 基础分计算 ---
         base_score = rps  # RPS作为基础分 (30%)
@@ -724,7 +770,7 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
         sector_score = 50  # 默认
         try:
             # 优先使用传入数据中的板块信息
-            sector = s.get('板块', '') or s.get('sector', '')
+            sector = s.get('sector', '')
             if sector:
                 for hot in hot_sectors:
                     if hot['name'] in sector or sector in hot['name']:
@@ -744,10 +790,10 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
         try:
             val_data = valuation_map.get(code)
             if val_data:
-                # 提取数据
-                pe = val_data.get('市盈率-动态', 0) or 0
-                pb = val_data.get('市净率', 0) or 0
-                market_cap = (val_data.get('总市值', 0) or 0) / 100000000  # 转为亿
+                # 提取数据 (v2.5.1: 采用标准化英文键)
+                pe = val_data.get('pe', 0) or 0
+                pb = val_data.get('pb', 0) or 0
+                market_cap = (val_data.get('market_cap', 0) or 0) / 100000000  # 转为亿
                 
                 # PE评分 (低PE加分)
                 if 0 < pe < 15: valuation_score += 20
@@ -774,7 +820,7 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
         volume_features = []
         try:
             # 从传入的数据中获取量比
-            volume_ratio = s.get('量比', 1.0)
+            volume_ratio = s.get('volume_ratio', 1.0)
             
             # 简化版量能评分：基于量比
             if volume_ratio >= 2.0:

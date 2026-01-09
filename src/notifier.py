@@ -114,7 +114,7 @@ def format_stock_message(stocks: List[Dict]) -> str:
     if traps:
         lines.append("### ⚠️ 诱多警告\n")
         for s in traps[:3]:
-            lines.append(f"- **{s['代码']} {s['名称']}** | RPS高但主力在出货！")
+            lines.append(f"- **{s['code']} {s['name']}** | RPS高但主力在出货！")
         lines.append("")
     
     # 按评级分类 (如果有多因子评分)
@@ -126,17 +126,17 @@ def format_stock_message(stocks: List[Dict]) -> str:
         if grade_a:
             lines.append("### 🏆 A级推荐 (≥80分)\n")
             for s in grade_a[:5]:
-                lines.append(f"- **{s['代码']} {s['名称']}** | {s['现价']} | 评分:{s['total_score']} | {s.get('分类', '')}")
+                lines.append(f"- **{s['code']} {s['name']}** | {s['close']} | 评分:{s['total_score']} | {s.get('category', '')}")
         
         if grade_b:
             lines.append("\n### ⭐ B级推荐 (≥70分)\n")
             for s in grade_b[:5]:
-                lines.append(f"- {s['代码']} {s['名称']} | {s['现价']} | 评分:{s['total_score']}")
+                lines.append(f"- {s['code']} {s['name']} | {s['close']} | 评分:{s['total_score']}")
         
         if grade_c:
-            lines.append("\n### 📊 C级标的 (≥60分)\n")
+            lines.append("\n### 📊 C级标特 (≥60分)\n")
             for s in grade_c[:3]:
-                lines.append(f"- {s['代码']} {s['名称']} | {s['现价']}")
+                lines.append(f"- {s['code']} {s['name']} | {s['close']}")
             if len(grade_c) > 3:
                 lines.append(f"- ... 共 {len(grade_c)} 只")
     else:
@@ -148,17 +148,17 @@ def format_stock_message(stocks: List[Dict]) -> str:
         if core:
             lines.append("### ⭐ 趋势核心\n")
             for s in core:
-                lines.append(f"- **{s['代码']} {s['名称']}** | {s['现价']} | RPS:{s['RPS']}")
+                lines.append(f"- **{s['code']} {s['name']}** | {s['close']} | RPS:{s['rps']}")
         
         if potential:
             lines.append("\n### 🔥 潜力股\n")
             for s in potential:
-                lines.append(f"- {s['代码']} {s['名称']} | {s['现价']} | RPS:{s['RPS']}")
+                lines.append(f"- {s['code']} {s['name']} | {s['close']} | RPS:{s['rps']}")
         
         if stable:
             lines.append("\n### 📊 稳健标的\n")
             for s in stable[:5]:
-                lines.append(f"- {s['代码']} {s['名称']} | {s['现价']}")
+                lines.append(f"- {s['code']} {s['name']} | {s['close']}")
             if len(stable) > 5:
                 lines.append(f"- ... 共 {len(stable)} 只")
     

@@ -44,23 +44,11 @@ def check_environment():
             logger.warning("   ⚠️ 未发现 .env 文件，如果需要推送通知，请根据 .env.example 创建")
         
         # 4. v2.5.1: 检查 SQLite 数据库读写权限
-        db_path = os.path.join(DATA_DIR, "alphahunter.db")
-        if os.path.exists(db_path):
-            # 检查读权限
-            if not os.access(db_path, os.R_OK):
-                logger.error(f"   ❌ 数据库文件无读权限: {db_path}")
-                return False
-            # 检查写权限
-            if not os.access(db_path, os.W_OK):
-                logger.error(f"   ❌ 数据库文件无写权限: {db_path}")
-                return False
-            logger.info("   ✅ 数据库权限检查通过")
-        else:
-            # 检查 data 目录的写权限（用于创建新数据库）
-            if not os.access(DATA_DIR, os.W_OK):
-                logger.error(f"   ❌ 数据目录无写权限: {DATA_DIR}")
-                return False
-            logger.info("   ✅ 数据库将在首次使用时创建")
+        from src.database import db
+        if not db.check_write_permission():
+            logger.error("   ❌ 数据库权限检查失败！请检查 data/ 目录读写权限。")
+            return False
+        logger.info("   ✅ 数据库引擎权限自检通过")
             
     except Exception as e:
         logger.error(f"   ❌ 自检过程出错: {e}")

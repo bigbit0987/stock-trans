@@ -12,7 +12,6 @@ v2.4 改进:
 """
 import os
 import sys
-import json
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 import pandas as pd
@@ -23,33 +22,38 @@ sys.path.insert(0, PROJECT_ROOT)
 
 import akshare as ak
 from config import REALTIME_MONITOR
-from src.utils import logger, safe_read_json, safe_write_json
-
-
-# 虚拟持仓文件
-VIRTUAL_POSITIONS_FILE = os.path.join(PROJECT_ROOT, "data", "virtual_positions.json")
-# 虚拟交易记录
-VIRTUAL_TRADES_FILE = os.path.join(PROJECT_ROOT, "data", "virtual_trades.json")
+from src.utils import logger
+from src.database import db
 
 
 def load_virtual_positions() -> Dict:
-    """加载虚拟持仓 (v2.4: 使用带锁读取)"""
-    return safe_read_json(VIRTUAL_POSITIONS_FILE, default={})
+    """加载活跃的虚拟持仓 (v2.5.1: 迁移至 SQLite)"""
+    return db.get_virtual_holdings(only_active=True)
 
 
 def save_virtual_positions(positions: Dict):
-    """保存虚拟持仓 (v2.4: 使用带锁写入)"""
-    safe_write_json(VIRTUAL_POSITIONS_FILE, positions)
+    """保存虚拟持仓 (v2.5.1: 迁移至 SQLite)"""
+    # 遍历字典进行增量保存
+    for code, info in positions.items():
+        db.save_virtual_holding(code, info)
 
 
 def load_virtual_trades() -> List[Dict]:
-    """加载虚拟交易记录 (v2.4: 使用带锁读取)"""
-    return safe_read_json(VIRTUAL_TRADES_FILE, default=[])
+    """加载虚拟交易记录 (v2.5.1: 迁移至 SQLite)"""
+    return db.get_virtual_trade_history()
 
 
 def save_virtual_trades(trades: List[Dict]):
-    """保存虚拟交易记录 (v2.4: 使用带锁写入)"""
-    safe_write_json(VIRTUAL_TRADES_FILE, trades)
+    """保存虚拟交易记录 (v2.5.1: 迁移至 SQLite)"""
+    # 这里的参数 trades 通常是新增的单笔交易
+    if isinstance(trades, list) and len(trades) > 0:
+        # 如果是列表，通常最后那个是新的
+        # 但为了稳妥，我们在 record 处直接调用数据库
+        pass
+
+def add_virtual_trade(trade: Dict):
+    """新增单笔虚拟交易历史"""
+    db.add_virtual_trade_history(trade)
 
 
 def add_recommendations_to_virtual(stocks: List[Dict]):
@@ -67,7 +71,7 @@ def add_recommendations_to_virtual(stocks: List[Dict]):
     added_count = 0
     
     for s in stocks:
-        code = s.get('代码', '')
+        code = s.get('code', '')
         if not code:
             continue
         
@@ -76,14 +80,14 @@ def add_recommendations_to_virtual(stocks: List[Dict]):
             continue
         
         positions[code] = {
-            'name': s.get('名称', ''),
-            'buy_price': s.get('现价', 0),
+            'name': s.get('name', ''),
+            'buy_price': s.get('close', 0),
             'buy_date': today,
-            'rps': s.get('RPS', 0),
-            'category': s.get('分类', ''),
-            'suggestion': s.get('建议', ''),
-            'highest_price': s.get('现价', 0),
-            'lowest_price': s.get('现价', 0),
+            'rps': s.get('rps', 0),
+            'category': s.get('category', ''),
+            'suggestion': s.get('suggestion', ''),
+            'highest_price': s.get('close', 0),
+            'lowest_price': s.get('close', 0),
             'closed': False,
             'close_date': None,
             'close_price': None,
@@ -379,15 +383,14 @@ def run_virtual_monitor() -> List[Dict]:
             signals.append(signal)
             
             # 自动平仓（虚拟）
-            positions[code]['closed'] = True
-            positions[code]['close_date'] = datetime.now().strftime('%Y-%m-%d %H:%M')
-            positions[code]['close_price'] = current
-            positions[code]['close_reason'] = signal['reason']
-            positions[code]['pnl_pct'] = signal['pnl_pct']
+            info['closed'] = True
+            info['close_date'] = datetime.now().strftime('%Y-%m-%d %H:%M')
+            info['close_price'] = current
+            info['close_reason'] = signal['reason']
+            info['pnl_pct'] = signal['pnl_pct']
             
-            # 记录到交易历史
-            trades = load_virtual_trades()
-            trades.append({
+            # 记录到交易历史 (v2.5.1: 直接原子写入数据库)
+            add_virtual_trade({
                 'code': code,
                 'name': info['name'],
                 'buy_price': info['buy_price'],
@@ -401,11 +404,11 @@ def run_virtual_monitor() -> List[Dict]:
                 'type': signal['type'],
                 'days_held': (datetime.now() - datetime.strptime(info['buy_date'], '%Y-%m-%d')).days,
             })
-            save_virtual_trades(trades)
             
             logger.info(f"  📤 {code} {info['name']}: {signal['reason']} | 盈亏: {signal['pnl_pct']:+.2f}%")
-    
-    save_virtual_positions(positions)
+        
+        # 立即更新此条持仓状态
+        db.save_virtual_holding(code, info)
     
     return signals
 
@@ -569,8 +572,8 @@ def list_virtual_positions():
 
 
 def clear_virtual_positions():
-    """清空虚拟持仓"""
-    save_virtual_positions({})
+    """清空虚拟持仓 (v2.5.1: 使用数据库)"""
+    db.clear_virtual_holdings()
     logger.info("🧹 已清空虚拟持仓")
 
 

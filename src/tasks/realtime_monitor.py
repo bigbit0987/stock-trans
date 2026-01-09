@@ -22,54 +22,40 @@ sys.path.insert(0, PROJECT_ROOT)
 
 import pandas as pd
 from config import REALTIME_MONITOR
-from src.utils import logger, safe_read_json, safe_write_json
+from src.utils import logger
 from src.database import db
+from src.data_loader import get_realtime_quotes
 from src.indicators import get_grade_based_stop_params
 
 
-# 提醒记录文件 (用于冷却机制)
-ALERT_HISTORY_FILE = os.path.join(PROJECT_ROOT, "data", "alert_history.json")
-
-
 def load_alert_history() -> Dict:
-    """加载提醒历史记录 (线程安全)"""
-    return safe_read_json(ALERT_HISTORY_FILE, default={})
-
-
-def save_alert_history(history: Dict):
-    """保存提醒历史记录 (线程安全 + 原子写入)"""
-    safe_write_json(ALERT_HISTORY_FILE, history)
+    """加载提醒历史记录 (v2.5.1: 迁移至 SQLite)"""
+    return db.get_alert_history()
 
 
 def can_send_alert(code: str, alert_type: str) -> bool:
     """
     检查是否可以发送提醒 (冷却机制)
-    
-    Args:
-        code: 股票代码
-        alert_type: 提醒类型 (如 'profit_3', 'stop_loss', 'drawdown')
-    
-    Returns:
-        是否可以发送
     """
-    history = load_alert_history()
     key = f"{code}_{alert_type}"
+    history = db.get_alert_history()
     
     if key not in history:
         return True
     
-    last_time = datetime.fromisoformat(history[key])
-    cooldown = REALTIME_MONITOR['alert_cooldown']
-    
-    return (datetime.now() - last_time).total_seconds() > cooldown
+    try:
+        last_time = datetime.fromisoformat(history[key])
+        cooldown = REALTIME_MONITOR['alert_cooldown']
+        return (datetime.now() - last_time).total_seconds() > cooldown
+    except (ValueError, TypeError):
+        return True
 
 
 def record_alert(code: str, alert_type: str):
-    """记录提醒时间"""
-    history = load_alert_history()
+    """记录提醒时间 (v2.5.1: 立即同步到数据库)"""
     key = f"{code}_{alert_type}"
-    history[key] = datetime.now().isoformat()
-    save_alert_history(history)
+    now_str = datetime.now().isoformat()
+    db.save_alert_history(key, now_str)
 
 
 def is_trading_time() -> bool:
@@ -99,22 +85,14 @@ def is_trading_time() -> bool:
 
 
 def get_realtime_prices(codes: List[str]) -> Dict[str, float]:
-    """
-    批量获取实时价格
-    
-    Args:
-        codes: 股票代码列表
-    
-    Returns:
-        {代码: 当前价格}
-    """
+    """批量获取实时价格 (v2.5.1)"""
     try:
-        df = ak.stock_zh_a_spot_em()
+        df = get_realtime_quotes()
         prices = {}
         for code in codes:
-            stock = df[df['代码'] == code]
+            stock = df[df['code'] == code]
             if not stock.empty:
-                prices[code] = stock.iloc[0]['最新价']
+                prices[code] = stock.iloc[0]['close']
         return prices
     except Exception as e:
         logger.error(f"获取实时价格失败: {e}")
@@ -425,21 +403,11 @@ def run_monitor_check():
 
 
 def clear_alert_history():
-    """清理过期的提醒历史 (保留24小时内的)"""
-    history = load_alert_history()
+    """清理过期的提醒历史 (保留24小时内的) (v2.5.1: 使用数据库)"""
     cutoff = datetime.now() - timedelta(hours=24)
-    
-    new_history = {}
-    for key, time_str in history.items():
-        try:
-            alert_time = datetime.fromisoformat(time_str)
-            if alert_time > cutoff:
-                new_history[key] = time_str
-        except ValueError:
-            pass
-    
-    save_alert_history(new_history)
-    logger.info(f"🧹 清理了 {len(history) - len(new_history)} 条过期提醒记录")
+    cutoff_str = cutoff.isoformat()
+    db.clear_alert_history(cutoff_str)
+    logger.info(f"🧹 已执行提醒记录库清理 (截止至 {cutoff_str[:19]})")
 
 
 if __name__ == "__main__":

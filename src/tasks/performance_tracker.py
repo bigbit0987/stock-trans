@@ -20,80 +20,92 @@ sys.path.insert(0, PROJECT_ROOT)
 
 import akshare as ak
 from config import PERFORMANCE_TRACKING, RESULTS_DIR
+from config import PERFORMANCE_TRACKING, RESULTS_DIR
 from src.utils import logger
+from src.database import db
+from src.data_loader import get_realtime_quotes
 
 
-# 推荐记录文件
-RECOMMENDATIONS_FILE = os.path.join(PROJECT_ROOT, "data", "recommendations.json")
-# 效果统计文件
-PERFORMANCE_FILE = os.path.join(PROJECT_ROOT, "data", "performance_stats.json")
+def load_recommendations_v2() -> List[Dict]:
+    """获取所有原始推荐记录 (数据库格式)"""
+    return db.get_recommendations()
 
 
 def load_recommendations() -> Dict:
-    """加载推荐记录"""
-    if os.path.exists(RECOMMENDATIONS_FILE):
-        try:
-            with open(RECOMMENDATIONS_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            return {}
-    return {}
+    """
+    加载推荐记录并转换为旧的 Dict 结构以保持逻辑兼容
+    Struct: { '2026-01-08': {'stocks': [...]} }
+    """
+    recs = db.get_recommendations()
+    legacy_format = {}
+    for r in recs:
+        date = r['date']
+        if date not in legacy_format:
+            legacy_format[date] = {'stocks': []}
+        
+        legacy_format[date]['stocks'].append({
+            'code': r['code'],
+            'name': r['name'],
+            'price': r['buy_price'],
+            'rps': r['rps'],
+            'category': r['category'],
+            'suggestion': r['suggestion'],
+            'day1_pnl': r.get('day1_pnl'),
+            'day3_pnl': r.get('day3_pnl'),
+            'day5_pnl': r.get('day5_pnl'),
+        })
+    return legacy_format
 
 
 def save_recommendations(data: Dict):
-    """保存推荐记录"""
-    os.makedirs(os.path.dirname(RECOMMENDATIONS_FILE), exist_ok=True)
-    with open(RECOMMENDATIONS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    """保存推荐记录 (v2.5.1: 写入数据库)"""
+    for date, content in data.items():
+        for s in content['stocks']:
+            db.save_recommendation({
+                'date': date,
+                'code': s['code'],
+                'name': s['name'],
+                'buy_price': s.get('price', 0),
+                'rps': s.get('rps', 0),
+                'category': s.get('category', ''),
+                'suggestion': s.get('suggestion', ''),
+                'day1_pnl': s.get('day1_pnl'),
+                'day3_pnl': s.get('day3_pnl'),
+                'day5_pnl': s.get('day5_pnl'),
+            })
 
 
 def record_daily_recommendations(stocks: List[Dict]):
     """
     记录当日推荐的股票
-    
-    Args:
-        stocks: 选股结果列表
     """
     if not stocks:
         return
     
     today = datetime.now().strftime('%Y-%m-%d')
-    recommendations = load_recommendations()
-    
-    # 记录推荐
-    recommendations[today] = {
-        'stocks': [],
-        'recorded_at': datetime.now().isoformat()
-    }
-    
+    added = 0
     for s in stocks:
-        recommendations[today]['stocks'].append({
+        db.save_recommendation({
+            'date': today,
             'code': s.get('代码', ''),
             'name': s.get('名称', ''),
-            'price': s.get('现价', 0),
+            'buy_price': s.get('现价', 0),
             'rps': s.get('RPS', 0),
             'category': s.get('分类', ''),
             'suggestion': s.get('建议', ''),
-            # 后续追踪字段
-            'day1_price': None,
-            'day1_pnl': None,
-            'day3_price': None,
-            'day3_pnl': None,
-            'day5_price': None,
-            'day5_pnl': None,
         })
+        added += 1
     
-    save_recommendations(recommendations)
-    logger.info(f"📝 已记录 {len(stocks)} 只推荐股票 ({today})")
+    logger.info(f"📝 已在数据库中记录 {added} 只推荐股票 ({today})")
 
 
 def get_stock_price(code: str) -> Optional[float]:
-    """获取股票当前价格"""
+    """获取股票当前价格 (v2.5.1)"""
     try:
-        df = ak.stock_zh_a_spot_em()
-        stock = df[df['代码'] == code]
+        df = get_realtime_quotes()
+        stock = df[df['code'] == code]
         if not stock.empty:
-            return stock.iloc[0]['最新价']
+            return stock.iloc[0]['close']
     except Exception:
         pass
     return None
@@ -239,10 +251,7 @@ def calculate_statistics() -> Dict:
             'day5': calc_stats(data['day5_pnls']),
         }
     
-    # 保存统计结果
-    with open(PERFORMANCE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(stats, f, ensure_ascii=False, indent=2)
-    
+    # 返回统计结果
     return stats
 
 
