@@ -427,15 +427,21 @@ def run_scan():
             logger.info(f"   历史胜率: {kelly_result['win_rate']*100:.1f}%")
             logger.info(f"   建议金额: {kelly_result['suggested_amount']:.0f} 元 ({kelly_result['adjustment']})")
             
-            # 为每只股票更新建议买入金额
-            # v2.5.1: 应用市场宽度风控乘数
+            # v2.5.1: 市场宽度深度联动
+            # breadth > 15%: 仓位加成 1.2x (极强市场)
+            # breadth 8-15%: 正常仓位 1.0x
+            # breadth 4-8%: 仓位减半 0.5x (已在前面设置)
+            if position_multiplier == 1.0 and breadth_pct > 15:
+                position_multiplier = 1.2
+                logger.info(f"   📈 市场宽度极强 ({breadth_pct}%)，仓位加成 ×1.2")
+            
             adjusted_amount = kelly_result['suggested_amount'] * position_multiplier
             for s in signals:
-                current_price = s.get('现价', 0)
+                current_price = s.get('close', 0)
                 if current_price > 0:
                     suggested_vol = int(adjusted_amount / current_price / 100) * 100
-                    s['建议买入'] = f"{suggested_vol} 股"
-                    s['建议金额'] = adjusted_amount
+                    s['suggested_volume'] = f"{suggested_vol} 股"
+                    s['suggested_amount'] = adjusted_amount
             
             if position_multiplier < 1.0:
                 logger.info(f"   ⚠️ 已应用市场宽度风控: 建议金额 × {position_multiplier:.0%}")
@@ -475,10 +481,15 @@ def run_scan():
                             # 意图识别：量增价稳/升 -> 积极吸筹
                             results_df.loc[idx_val, 'remark'] = f"✨尾盘吸筹({tail_ratio:.0f}%, {tail_change:+.1f}%)"
                             results_df.loc[idx_val, 'total_score'] += min(tail_ratio / 2, 10)
+                        elif tail_change < -1.0:
+                            # 严重砸盘：标记为待剔除
+                            results_df.loc[idx_val, 'remark'] = f"🚫尾盘砸盘({tail_ratio:.0f}%, {tail_change:.1f}%)"
+                            results_df.loc[idx_val, '_exclude'] = True  # 标记待剔除
+                            logger.warning(f"   ⚠️ {code} 尾盘放量砸盘 ({tail_change:.1f}%)，已剔除")
                         elif tail_change < -0.5:
-                            # 意图识别：量增价跌 -> 尾盘砸盘/避险出逃
-                            results_df.loc[idx_val, 'remark'] = f"⚠️尾盘砸盘({tail_ratio:.0f}%, {tail_change:.1f}%)"
-                            results_df.loc[idx_val, 'total_score'] -= 8
+                            # 轻微砸盘：减分但保留
+                            results_df.loc[idx_val, 'remark'] = f"⚠️尾盘异动({tail_ratio:.0f}%, {tail_change:.1f}%)"
+                            results_df.loc[idx_val, 'total_score'] -= 5
                         else:
                             results_df.loc[idx_val, 'remark'] = f"📊尾盘异动({tail_ratio:.0f}%)"
 
@@ -491,6 +502,14 @@ def run_scan():
                         results_df.loc[idx_val, 'total_score'] += 5
                 except Exception as e:
                     logger.debug(f"二次验证失败 {code}: {e}")
+            
+            # v2.5.1: 剔除尾盘砸盘标的
+            if '_exclude' in results_df.columns:
+                exclude_count = results_df['_exclude'].sum() if results_df['_exclude'].notna().any() else 0
+                if exclude_count > 0:
+                    results_df = results_df[results_df['_exclude'] != True]
+                    results_df = results_df.drop(columns=['_exclude'], errors='ignore')
+                    logger.info(f"   🚫 已剔除 {int(exclude_count)} 只尾盘砸盘标的")
             
             # 重新排序
             if 'total_score' in results_df.columns:
