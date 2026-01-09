@@ -17,7 +17,7 @@ sys.path.insert(0, PROJECT_ROOT)
 import akshare as ak
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from config import STRATEGY, RESULTS_DIR, CONCURRENT, RISK_CONTROL, RPS_DATA_DIR, CAPITAL
-from src.data_loader import get_realtime_quotes, load_latest_rps, get_stock_history, get_cache_stats
+from src.data_loader import get_realtime_quotes, load_latest_rps, get_stock_history, get_cache_stats, get_tail_volume_ratio
 from src.strategy import filter_by_basic_conditions, generate_signal
 from src.utils import logger
 
@@ -114,6 +114,8 @@ def run_scan():
     # =========================================
     # 大盘风控检查 (增强版)
     # =========================================
+    position_multiplier = 1.0  # v2.5.1: 仓位乘数，用于市场宽度渐进式风控
+    
     try:
         from config import MARKET_RISK_CONTROL
         from src.factors import get_market_condition, print_market_condition
@@ -121,7 +123,33 @@ def run_scan():
         if MARKET_RISK_CONTROL.get('enabled', True):
             market_cond = print_market_condition()
             
-            # 检查是否应该停止交易
+            # =========================================
+            # v2.5.1: Market Breadth 渐进式风控
+            # 根据市场宽度动态调整操作策略
+            # =========================================
+            breadth = market_cond.get('market_breadth', {})
+            breadth_pct = breadth.get('breadth_pct', 10)  # 默认 10%
+            
+            if breadth_pct < 4:
+                # 极弱市场：休眠模式
+                logger.warning(f"\n🛑 市场宽度预警: 仅 {breadth_pct}% 创新高 (极弱)")
+                logger.warning("   触发休眠模式，今日停止选股！")
+                
+                from src.notifier import notify_all
+                notify_all("系统进入休眠模式 💤", 
+                          f"触发条件: 市场宽度仅 {breadth_pct}%（创20日新高家数占比极低）\n\n"
+                          "分析: 杀强势股行情，即使指数护盘，个股也会普跌。\n"
+                          "建议: 空仓观望，等待市场情绪回暖。")
+                return []
+            elif breadth_pct < 8:
+                # 弱市场：单笔金额减半
+                position_multiplier = 0.5
+                logger.warning(f"\n⚠️ 市场宽度偏弱: {breadth_pct}% 创新高")
+                logger.warning("   渐进式风控: 单笔金额自动减半")
+            else:
+                logger.info(f"\n✅ 市场宽度良好: {breadth_pct}% 创新高 ({breadth.get('status', '')})")
+            
+            # 检查是否应该停止交易 (原有逻辑)
             is_risky = not market_cond['safe']
             
             # 获取风控配置
@@ -226,21 +254,17 @@ def run_scan():
                 'amplitude': row['振幅']
             }
 
+        # v2.5.1: 只获取历史数据，尾盘数据延迟到前10名确认阶段
+        # 避免高频调用分钟线 API 导致 IP 封禁
         future_to_stock = {
-            executor.submit(
-                lambda c: (get_stock_history(c), get_tail_volume_ratio(c)), 
-                code
-            ): code 
+            executor.submit(get_stock_history, code): code 
             for code in stock_data_map.keys()
         }
         
         for future in as_completed(future_to_stock):
             code = future_to_stock[future]
             try:
-                hist, tail_vol_ratio = future.result()
-                
-                # 更新 stock_data_map 加入尾盘数据
-                stock_data_map[code]['tail_vol_ratio'] = tail_vol_ratio
+                hist = future.result()
                 
                 # ---【防止未来函数】---
                 # 确保 hist 中不包含今天正在交易的 K 线数据
@@ -289,13 +313,13 @@ def run_scan():
                     # 获取历史成交量 (v2.4 支持)
                     hist_volumes = hist['成交量'].tolist() if '成交量' in hist.columns else []
                     
-                    # 调用通用信号生成函数 (v2.5.0: 传入 rps20 和 tail_vol_ratio)
+                    # 调用通用信号生成函数 (v2.5.1: 尾盘数据延迟获取)
                     strategy_result = generate_signal(
                         code, data['name'], data['current_close'], 
                         data['pct_change'], data['turnover'], data['volume_ratio'], data['amplitude'],
                         hist_closes, prev_close, prev_open, prev_pct, rps_score,
                         sector_rps, rps_change, rps20_score, hist_volumes, 
-                        tail_vol_ratio=data.get('tail_vol_ratio', 0)
+                        tail_vol_ratio=0  # 延迟到前10名确认阶段再获取
                     )
                     
                     if strategy_result:
@@ -404,12 +428,17 @@ def run_scan():
             logger.info(f"   建议金额: {kelly_result['suggested_amount']:.0f} 元 ({kelly_result['adjustment']})")
             
             # 为每只股票更新建议买入金额
+            # v2.5.1: 应用市场宽度风控乘数
+            adjusted_amount = kelly_result['suggested_amount'] * position_multiplier
             for s in signals:
                 current_price = s.get('现价', 0)
                 if current_price > 0:
-                    suggested_vol = int(kelly_result['suggested_amount'] / current_price / 100) * 100
+                    suggested_vol = int(adjusted_amount / current_price / 100) * 100
                     s['建议买入'] = f"{suggested_vol} 股"
-                    s['建议金额'] = kelly_result['suggested_amount']
+                    s['建议金额'] = adjusted_amount
+            
+            if position_multiplier < 1.0:
+                logger.info(f"   ⚠️ 已应用市场宽度风控: 建议金额 × {position_multiplier:.0%}")
     except Exception as e:
         logger.warning(f"凯利公式计算失败: {e}")
     # =========================================
@@ -420,6 +449,54 @@ def run_scan():
         results_df = results_df.sort_values(by='total_score', ascending=False)
     else:
         results_df = results_df.sort_values(by='RPS', ascending=False)
+    
+    # =========================================
+    # v2.5.1: 前10名二次确认 - 获取尾盘吸筹数据
+    # 将高频 API 调用限制在精选范围内，避免 IP 封禁
+    # =========================================
+    try:
+        top_codes = results_df.head(10)['代码'].tolist()
+        if top_codes:
+            logger.info(f"\n🔬 前10名二次确认: 获取尾盘吸筹数据...")
+            
+            for code in top_codes:
+                try:
+                    tail_ratio = get_tail_volume_ratio(code)
+                    if tail_ratio > 15:
+                        # v2.5.1: 获取当日涨跌幅判断真吸筹还是出货
+                        idx = results_df[results_df['代码'] == code].index
+                        if len(idx) > 0:
+                            pct_change = results_df.loc[idx[0], '涨幅%'] if '涨幅%' in results_df.columns else 0
+                            current_score = results_df.loc[idx[0], 'total_score'] if 'total_score' in results_df.columns else 0
+                            
+                            # 真吸筹: 尾盘放量 + 当日涨价
+                            # 出货嫌疑: 尾盘放量 + 当日跌价或滞涨
+                            if pct_change > 0.5:
+                                # 真吸筹信号
+                                results_df.loc[idx[0], '尾盘吸筹'] = f"✨{tail_ratio:.1f}%"
+                                if 'total_score' in results_df.columns:
+                                    bonus = min(tail_ratio / 2, 10)  # 最多加10分
+                                    results_df.loc[idx[0], 'total_score'] = current_score + bonus
+                                logger.info(f"   ✨ {code} 尾盘吸筹 {tail_ratio:.1f}% (涨幅{pct_change:.1f}%) → 加分")
+                            elif pct_change < -0.5:
+                                # 出货嫌疑
+                                results_df.loc[idx[0], '尾盘吸筹'] = f"⚠️{tail_ratio:.1f}%"
+                                if 'total_score' in results_df.columns:
+                                    penalty = min(tail_ratio / 3, 8)  # 最多减8分
+                                    results_df.loc[idx[0], 'total_score'] = current_score - penalty
+                                logger.warning(f"   ⚠️ {code} 尾盘放量但下跌 {tail_ratio:.1f}% (跌幅{pct_change:.1f}%) → 出货嫌疑")
+                            else:
+                                # 滞涨，不加分也不减分
+                                results_df.loc[idx[0], '尾盘吸筹'] = f"{tail_ratio:.1f}%"
+                                logger.info(f"   📊 {code} 尾盘放量 {tail_ratio:.1f}% (滞涨)")
+                except Exception as e:
+                    logger.debug(f"获取 {code} 尾盘数据失败: {e}")
+            
+            # 重新排序
+            if 'total_score' in results_df.columns:
+                results_df = results_df.sort_values(by='total_score', ascending=False)
+    except Exception as e:
+        logger.warning(f"尾盘二次确认失败: {e}")
     
     # 保存结果
     today = datetime.datetime.now().strftime('%Y%m%d')

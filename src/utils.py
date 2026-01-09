@@ -80,6 +80,86 @@ def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
 
 
 # ============================================
+# 线程安全的 JSON 读写 (v2.5.1 恢复)
+# 供 alert_history 和 virtual_tracker 使用
+# ============================================
+
+import fcntl
+import tempfile
+import shutil
+
+def safe_read_json(filepath: str, default: Any = None) -> Any:
+    """
+    线程安全的 JSON 读取
+    
+    Args:
+        filepath: JSON 文件路径
+        default: 文件不存在或解析失败时的默认值
+    
+    Returns:
+        解析后的 JSON 数据
+    """
+    if not os.path.exists(filepath):
+        return default if default is not None else {}
+    
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_SH)  # 共享锁（读锁）
+            try:
+                content = f.read()
+                return json.loads(content) if content.strip() else (default if default is not None else {})
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+    except (json.JSONDecodeError, IOError, OSError) as e:
+        logger.warning(f"读取 JSON 失败 {filepath}: {e}")
+        return default if default is not None else {}
+
+
+def safe_write_json(filepath: str, data: Any) -> bool:
+    """
+    线程安全的 JSON 写入（原子操作）
+    
+    使用临时文件 + rename 的方式确保写入的原子性，
+    即使进程崩溃也不会产生损坏的 JSON 文件。
+    
+    Args:
+        filepath: 目标文件路径
+        data: 要写入的数据
+    
+    Returns:
+        是否写入成功
+    """
+    try:
+        # 确保目录存在
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
+        # 写入临时文件
+        fd, tmp_path = tempfile.mkstemp(
+            suffix='.tmp',
+            dir=os.path.dirname(filepath)
+        )
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # 排他锁（写锁）
+                try:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                finally:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+            
+            # 原子性重命名
+            shutil.move(tmp_path, filepath)
+            return True
+        except Exception:
+            # 清理临时文件
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
+    except Exception as e:
+        logger.error(f"写入 JSON 失败 {filepath}: {e}")
+        return False
+
+
+# ============================================
 # 日期校验工具 (v2.4 新增)
 # 防止 MA5 计算时的"未来函数"错误
 # ============================================

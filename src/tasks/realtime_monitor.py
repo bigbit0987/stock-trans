@@ -22,7 +22,7 @@ sys.path.insert(0, PROJECT_ROOT)
 
 import pandas as pd
 from config import REALTIME_MONITOR
-from src.utils import logger
+from src.utils import logger, safe_read_json, safe_write_json
 from src.database import db
 from src.indicators import get_grade_based_stop_params
 
@@ -127,10 +127,20 @@ def analyze_position(
     buy_price: float,
     current_price: float,
     highest_price: float,
-    strategy: str
+    strategy: str,
+    grade: str = 'B'  # v2.5.1: 修复 - 将 grade 作为显式参数
 ) -> List[Dict]:
     """
     分析单只股票，生成预警信号
+    
+    Args:
+        code: 股票代码
+        name: 股票名称
+        buy_price: 买入价格
+        current_price: 当前价格
+        highest_price: 持仓期间最高价
+        strategy: 策略类型
+        grade: 股票评级 (A/B/C)
     
     Returns:
         预警列表
@@ -141,7 +151,6 @@ def analyze_position(
     pnl_pct = (current_price - buy_price) / buy_price * 100
     
     # v2.5.0: 根据 Grade 获取差异化参数
-    grade = kwargs.get('grade', 'B')
     risk_params = get_grade_based_stop_params(grade)
     
     # 计算回撤

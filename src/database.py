@@ -19,6 +19,8 @@ class Database:
         conn = sqlite3.connect(self.db_path, timeout=20)
         # 开启 WAL 模式，提升并发读写性能
         conn.execute('PRAGMA journal_mode=WAL')
+        # v2.5.1: 优化写入性能，适用于 realtime_monitor 频繁更新
+        conn.execute('PRAGMA synchronous=NORMAL')
         return conn
 
     def _init_db(self):

@@ -37,7 +37,8 @@ stock_trans/
 │       └── realtime_monitor.py    # 📡 盘中实时监控
 │
 ├── 📁 data/                # 📦 私人数据库 (gitignore)
-│   ├── holdings.json       # 实盘持仓详情
+│   ├── alphahunter.db      # 🗄️ SQLite 数据库 (持仓 + 交易历史)
+│   ├── holdings.json       # [废弃] 旧版持仓文件
 │   ├── virtual_positions.json # 虚拟持仓记录
 │   ├── virtual_trades.json    # 虚拟交易历史
 │   └── ...                 # RPS 数据与历史缓存
@@ -322,7 +323,30 @@ source .venv/bin/activate && ./run_daily.sh
 
 ## 📝 更新日志
 
-- **v2.4** (2026-01-08): 🛡️ 稳如泰山版 (当前版本)
+- **v2.5.1** (2026-01-09): 🔧 架构深度优化版 (当前版本)
+  - **紧急 Bug 修复**
+    - 修复 `realtime_monitor.py` 中 `kwargs` 未定义导致的运行时崩溃
+    - 恢复 `safe_read_json`/`safe_write_json` 函数，修复提醒历史功能
+  - **存储层统一**
+    - `premarket.py` 集合竞价模块迁移至 SQLite 读取持仓
+    - 移除对 `holdings.json` 的直接读取依赖
+  - **性能与稳定性**
+    - **尾盘数据延迟获取**：将 `get_tail_volume_ratio` 从主扫描循环移至前 10 名二次确认阶段，避免高频 API 调用导致 IP 封禁
+    - **SQLite 写入优化**：添加 `PRAGMA synchronous=NORMAL`，提升实时监控频繁更新性能
+    - **环境自检增强**：`main.py` 新增 SQLite 数据库读写权限检查，防止生产环境权限问题
+  - **Market Breadth 渐进式风控**
+    - 市场宽度 `≥8%`：正常交易
+    - 市场宽度 `4%-8%`：单笔金额自动减半
+    - 市场宽度 `<4%`：触发休眠模式，停止选股并推送通知
+  - **尾盘吸筹判断增强**
+    - 放量 + 当日涨价 = ✨ 真吸筹，评分加分
+    - 放量 + 当日跌价 = ⚠️ 出货嫌疑，评分减分
+    - 放量 + 滞涨 = 中性标记
+  - **评级差异化参数**
+    - Grade A (趋势核心)：ATR 2 倍，回撤容忍 -5%
+    - Grade B (普通)：ATR 1.5 倍，回撤容忍 -3%
+    - Grade C (稳健)：ATR 1.2 倍，回撤容忍 -2.5%
+- **v2.4** (2026-01-08): 🛡️ 稳如泰山版
   - **架构稳定性升级**
     - **API 鲁棒性**: 引入 `tenacity` 实现指数退避重试，大幅降低网络波动导致的数据获取失败。
     - **并发写保护**: 引入跨进程文件锁，彻底解决多任务并发环境下 `JSON` 文件损坏的风险。

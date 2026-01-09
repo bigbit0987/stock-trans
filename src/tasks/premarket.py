@@ -2,11 +2,12 @@
 """
 集合竞价预警任务 (Pre-Market Alert)
 在 9:20 - 9:25 运行，扫描持仓的集合竞价情况
+
+v2.5.1: 改用 SQLite 数据库读取持仓
 """
 import os
 import sys
 import datetime
-import json
 import akshare as ak
 import pandas as pd
 
@@ -15,6 +16,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.utils import logger
+from src.database import db
 
 # 从配置文件读取阈值
 try:
@@ -29,14 +31,10 @@ except ImportError:
     HIGH_OPEN_STABLE = 2.0
     HIGH_OPEN_THRESHOLD = 3.0
 
-# 持仓文件路径
-HOLDINGS_FILE = os.path.join(PROJECT_ROOT, "data", "holdings.json")
 
 def load_holdings() -> dict:
-    if os.path.exists(HOLDINGS_FILE):
-        with open(HOLDINGS_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {}
+    """从 SQLite 加载持仓数据 (v2.5.1)"""
+    return db.get_holdings()
 
 def get_premarket_data():
     try:
