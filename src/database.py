@@ -15,7 +15,11 @@ class Database:
         self._init_db()
 
     def _get_connection(self):
-        return sqlite3.connect(self.db_path)
+        # 增加超时配置，解决高并发写入锁争抢
+        conn = sqlite3.connect(self.db_path, timeout=20)
+        # 开启 WAL 模式，提升并发读写性能
+        conn.execute('PRAGMA journal_mode=WAL')
+        return conn
 
     def _init_db(self):
         """初始化数据库表"""

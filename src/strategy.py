@@ -12,24 +12,26 @@ from config import STRATEGY, BLACKLIST
 
 def filter_by_basic_conditions(df: pd.DataFrame) -> pd.DataFrame:
     """
-    基础条件过滤
+    基础条件过滤 (v2.5.0: 已全面适配别名机制，可直接使用标准或中文索引)
     """
     mask = (
-        (df['涨跌幅'] > STRATEGY['pct_change_min']) & 
-        (df['涨跌幅'] < STRATEGY['pct_change_max']) & 
-        (df['换手率'] > STRATEGY['turnover_min']) &
-        (df['换手率'] < STRATEGY['turnover_max']) &
-        (df['量比'] > STRATEGY['volume_ratio_min']) &
-        (df['振幅'] < STRATEGY['amplitude_max']) &
-        (df['是阳线'] == True) &
-        (~df['名称'].str.contains('ST|退|N'))
+        (df['pct_change'] > STRATEGY['pct_change_min']) & 
+        (df['pct_change'] < STRATEGY['pct_change_max']) & 
+        (df['turnover'] > STRATEGY['turnover_min']) &
+        (df['turnover'] < STRATEGY['turnover_max']) &
+        (df['volume_ratio'] > STRATEGY['volume_ratio_min']) &
+        (df['amplitude'] < STRATEGY['amplitude_max']) &
+        (df['is_up'] == True) &
+        (~df['name'].str.contains('ST|退|N'))
     )
     
     result = df[mask].copy()
     
     # 应用黑名单过滤
     if BLACKLIST:
-        result = result[~result['代码'].isin(BLACKLIST)]
+        # 同时支持 code 或 代码 索引
+        col_code = 'code' if 'code' in result.columns else '代码'
+        result = result[~result[col_code].isin(BLACKLIST)]
     
     return result
 

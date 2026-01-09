@@ -24,8 +24,6 @@ from config import RESULTS_DIR, PORTFOLIO_CHECK
 from src.utils import logger
 from src.database import db
 
-# 持仓文件路径
-HOLDINGS_FILE = os.path.join(PROJECT_ROOT, "data", "holdings.json")
 
 
 def load_holdings() -> dict:
@@ -35,18 +33,28 @@ def load_holdings() -> dict:
 
 def save_holdings(holdings: dict):
     """保存持仓数据到 SQLite (v2.5.0)"""
-    # 获取数据库中现有的代码
+    # 1. 保存到数据库
     old_holdings = db.get_holdings()
     old_codes = set(old_holdings.keys())
     new_codes = set(holdings.keys())
     
-    # 1. 移除已平仓的 (在旧的里但不在新的里)
+    # 移除已平仓的 (在旧的里但不在新的里)
     for code in old_codes - new_codes:
         db.remove_holding(code)
     
-    # 2. 保存/更新现有的
+    # 保存/更新现有的
     for code, info in holdings.items():
         db.save_holding(code, info)
+    
+    # 2. 自动备份数据库 (每天只备份一次)
+    today = datetime.date.today().strftime('%Y%m%d')
+    backup_marker = os.path.join(BACKUP_DIR, f".db_backup_{today}")
+    if not os.path.exists(backup_marker):
+        backup_data()
+        # 创建备份标记文件
+        os.makedirs(BACKUP_DIR, exist_ok=True)
+        with open(backup_marker, 'w') as f:
+            f.write(datetime.datetime.now().isoformat())
 
 
 # 备份目录
@@ -54,51 +62,25 @@ BACKUP_DIR = os.path.join(PROJECT_ROOT, "data", "backup")
 
 
 def backup_data():
-    """备份重要数据文件"""
+    """备份数据库文件 (v2.5.0)"""
     os.makedirs(BACKUP_DIR, exist_ok=True)
     today = datetime.date.today().strftime('%Y%m%d')
     
     import shutil
+    from src.database import DB_PATH
     
-    # 备份 holdings.json
-    if os.path.exists(HOLDINGS_FILE):
-        backup_holdings = os.path.join(BACKUP_DIR, f"holdings_{today}.json")
-        shutil.copy2(HOLDINGS_FILE, backup_holdings)
+    # 备份数据库主文件
+    if os.path.exists(DB_PATH):
+        shutil.copy2(DB_PATH, os.path.join(BACKUP_DIR, f"alphahunter_{today}.db"))
     
-    # 备份 trade_history.csv
-    history_file = os.path.join(PROJECT_ROOT, "data", "trade_history.csv")
-    if os.path.exists(history_file):
-        backup_history = os.path.join(BACKUP_DIR, f"trade_history_{today}.csv")
-        shutil.copy2(history_file, backup_history)
-    
-    # 只保留最近30天的备份
+    # 只保留最近30天的备份 (.db 文件)
     try:
-        files = os.listdir(BACKUP_DIR)
+        files = [f for f in os.listdir(BACKUP_DIR) if f.endswith('.db')]
         files.sort()
-        # 如果备份超过60个文件(约30天的holdings+history)，删除最旧的
-        while len(files) > 60:
-            oldest = files.pop(0)
-            os.remove(os.path.join(BACKUP_DIR, oldest))
+        while len(files) > 30:
+            os.remove(os.path.join(BACKUP_DIR, files.pop(0)))
     except Exception:
         pass
-
-
-def save_holdings(holdings: dict):
-    """保存持仓数据（线程安全 + 原子写入 + 自动备份）"""
-    # 使用线程安全的原子写入
-    if not safe_write_json(HOLDINGS_FILE, holdings):
-        logger.error("保存持仓数据失败！")
-        return
-    
-    # 自动备份 (每天只备份一次)
-    today = datetime.date.today().strftime('%Y%m%d')
-    backup_marker = os.path.join(BACKUP_DIR, f".backup_{today}")
-    if not os.path.exists(backup_marker):
-        backup_data()
-        # 创建备份标记文件
-        os.makedirs(BACKUP_DIR, exist_ok=True)
-        with open(backup_marker, 'w') as f:
-            f.write(datetime.datetime.now().isoformat())
 
 
 def add_position(
@@ -226,16 +208,7 @@ def _calculate_atr_stop_for_stock(code: str, buy_price: float, grade: str = 'B')
         return None
 
 
-def remove_position(code: str):
-    """移除持仓（不归档）"""
-    holdings = load_holdings()
-    
-    if code in holdings:
-        info = holdings.pop(code)
-        save_holdings(holdings)
-        logger.info(f"✅ 已移除持仓: {code} {info['name']}")
-    else:
-        logger.warning(f"⚠️ 未找到持仓: {code}")
+
 
 
 def get_latest_results_file() -> str:

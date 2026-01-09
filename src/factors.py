@@ -141,7 +141,8 @@ def calculate_market_breadth() -> Dict:
         if '20日新高' not in df.columns:
             return {'all_count': len(df), 'high_20_count': 0, 'breadth_pct': 0, 'status': '数据不足'}
             
-        high_20_count = df['20日新高'].astype(bool).sum()
+        # 稳健的布尔判定：支持 0/1, True/False, "True"/"False"
+        high_20_count = df['20日新高'].map(lambda x: str(x).lower() == 'true' or x is True or x == 1).sum()
         total = len(df)
         pct = round(high_20_count / total * 100, 2) if total > 0 else 0
         
@@ -397,15 +398,7 @@ def get_stock_sector(code: str) -> Optional[str]:
     return None
 
 
-def get_sector_stocks(sector_name: str) -> List[str]:
-    """获取板块内的股票代码列表"""
-    try:
-        df = ak.stock_board_industry_cons_em(symbol=sector_name)
-        if df is not None and not df.empty:
-            return df['代码'].tolist()
-    except Exception as e:
-        logger.debug(f"获取板块 {sector_name} 成分股失败: {e}")
-    return []
+
 
 
 def calculate_sector_score(code: str, hot_sectors: List[Dict]) -> float:

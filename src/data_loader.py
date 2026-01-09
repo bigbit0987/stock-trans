@@ -133,11 +133,19 @@ def get_realtime_quotes() -> pd.DataFrame:
     # 标准化列名
     df = standardize_df(df, REALTIME_COL_MAP)
     
-    # 兼容性处理：如果标准化后还是中文列，手动补充计算
-    # 这里的逻辑假设 df 已经被 rename 过了
+    # ---【v2.5.0 兼容性增强：保留中文索引副本】---
+    # 这样既能让旧代码跑通，又能让新逻辑使用英文标准列
+    compat_map = {v: k for k, v in REALTIME_COL_MAP.items()}
+    for eng, chn in compat_map.items():
+        if eng in df.columns:
+            df[chn] = df[eng]
+    
+    # 补充计算字段的标准化映射
     if 'high' in df.columns and 'low' in df.columns and 'close' in df.columns:
         df['amplitude'] = (df['high'] - df['low']) / df['close'].shift(1).fillna(df['open'])
+        df['振幅'] = df['amplitude']
         df['is_up'] = df['close'] > df['open']
+        df['是阳线'] = df['is_up']
     
     logger.info(f"   获取到 {len(df)} 只股票")
     return df

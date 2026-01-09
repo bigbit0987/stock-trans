@@ -73,108 +73,10 @@ def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
     return logger
 
 
-def format_price(price: float) -> str:
-    """格式化价格显示"""
-    return f"{price:.2f}"
 
 
-def format_pct(pct: float) -> str:
-    """格式化百分比显示"""
-    return f"{pct:+.2f}%"
 
 
-def format_number(num: int) -> str:
-    """格式化数字（添加千分位）"""
-    return f"{num:,}"
-
-
-# ============================================
-# 文件锁 JSON 读写器 (v2.4 新增)
-# 解决并发写入导致的数据丢失问题
-# ============================================
-
-# 全局线程锁（用于进程内并发控制）
-_file_locks: Dict[str, threading.Lock] = {}
-_lock_registry = threading.Lock()
-
-
-def _get_file_lock(filepath: str) -> threading.Lock:
-    """获取指定文件的线程锁"""
-    with _lock_registry:
-        if filepath not in _file_locks:
-            _file_locks[filepath] = threading.Lock()
-        return _file_locks[filepath]
-
-
-def safe_read_json(filepath: str, default: Any = None) -> Any:
-    """
-    线程安全的 JSON 读取
-    
-    Args:
-        filepath: JSON 文件路径
-        default: 文件不存在或解析失败时的默认值
-    
-    Returns:
-        JSON 数据或默认值
-    """
-    lock = _get_file_lock(filepath)
-    
-    with lock:
-        if not os.path.exists(filepath):
-            return default if default is not None else {}
-        
-        try:
-            # 尝试使用文件锁（跨进程保护）
-            try:
-                import portalocker
-                with portalocker.Lock(filepath, 'r', timeout=5) as f:
-                    return json.load(f)
-            except ImportError:
-                # 没有 portalocker，使用普通读取
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-        except (json.JSONDecodeError, IOError) as e:
-            logger.warning(f"读取 JSON 文件失败: {filepath}, 错误: {e}")
-            return default if default is not None else {}
-
-
-def safe_write_json(filepath: str, data: Any, indent: int = 2) -> bool:
-    """
-    线程安全的 JSON 写入
-    
-    Args:
-        filepath: JSON 文件路径
-        data: 要写入的数据
-        indent: 缩进空格数
-    
-    Returns:
-        是否写入成功
-    """
-    lock = _get_file_lock(filepath)
-    
-    with lock:
-        try:
-            # 确保目录存在
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
-            
-            # 先写入临时文件，成功后再重命名（原子操作）
-            temp_path = filepath + '.tmp'
-            
-            try:
-                import portalocker
-                with portalocker.Lock(temp_path, 'w', timeout=5) as f:
-                    json.dump(data, f, ensure_ascii=False, indent=indent)
-            except ImportError:
-                with open(temp_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=indent)
-            
-            # 原子替换
-            os.replace(temp_path, filepath)
-            return True
-            
-        except Exception as e:
-            logger.error(f"写入 JSON 文件失败: {filepath}, 错误: {e}")
-            return False
 
 
 # ============================================
@@ -235,24 +137,7 @@ def ensure_history_excludes_today(hist: pd.DataFrame, date_col: str = '日期') 
         return hist
 
 
-def validate_hist_closes(hist_closes: List[float], expected_days: int = 4) -> List[float]:
-    """
-    验证历史收盘价数据的有效性
-    
-    Args:
-        hist_closes: 历史收盘价列表
-        expected_days: 期望的最少天数
-    
-    Returns:
-        验证后的收盘价列表（可能截断或返回空）
-    """
-    if not hist_closes or len(hist_closes) < expected_days:
-        return []
-    
-    # 过滤掉无效值
-    valid_closes = [c for c in hist_closes if c and c > 0]
-    
-    return valid_closes
+
 
 
 # ============================================
