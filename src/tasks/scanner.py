@@ -227,14 +227,20 @@ def run_scan():
             }
 
         future_to_stock = {
-            executor.submit(get_stock_history, code): code 
+            executor.submit(
+                lambda c: (get_stock_history(c), get_tail_volume_ratio(c)), 
+                code
+            ): code 
             for code in stock_data_map.keys()
         }
         
         for future in as_completed(future_to_stock):
             code = future_to_stock[future]
             try:
-                hist = future.result()
+                hist, tail_vol_ratio = future.result()
+                
+                # 更新 stock_data_map 加入尾盘数据
+                stock_data_map[code]['tail_vol_ratio'] = tail_vol_ratio
                 
                 # ---【防止未来函数】---
                 # 确保 hist 中不包含今天正在交易的 K 线数据
@@ -267,6 +273,10 @@ def run_scan():
                             rps_change = rps_change_val if pd.notna(rps_change_val) else 0
                             sector_val = row_data.get('板块', '')
                             sector_name = sector_val if pd.notna(sector_val) else ''  # 获取板块名称
+                            
+                            # v2.5.0: 获取 RPS20 (短周期动量)
+                            rps20_val = row_data.get('RPS20', 0)
+                            rps20_score = rps20_val if pd.notna(rps20_val) else 0
                     
                     # 提取前一天数据 (hist 的最后一行通常是前一个交易日)
                     prev_day = hist.iloc[-1]
@@ -276,12 +286,16 @@ def run_scan():
                     
                     hist_closes = hist['收盘'].tolist()
                     
-                    # 调用通用信号生成函数
+                    # 获取历史成交量 (v2.4 支持)
+                    hist_volumes = hist['成交量'].tolist() if '成交量' in hist.columns else []
+                    
+                    # 调用通用信号生成函数 (v2.5.0: 传入 rps20 和 tail_vol_ratio)
                     strategy_result = generate_signal(
                         code, data['name'], data['current_close'], 
                         data['pct_change'], data['turnover'], data['volume_ratio'], data['amplitude'],
                         hist_closes, prev_close, prev_open, prev_pct, rps_score,
-                        sector_rps, rps_change
+                        sector_rps, rps_change, rps20_score, hist_volumes, 
+                        tail_vol_ratio=data.get('tail_vol_ratio', 0)
                     )
                     
                     if strategy_result:

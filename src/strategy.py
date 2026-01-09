@@ -98,7 +98,9 @@ def generate_signal(
     rps: float = 50,
     sector_rps: float = 50,
     rps_change: float = 0,
-    hist_volumes: List[float] = None  # v2.4 新增: 历史成交量数据
+    rps20: float = 50,                # v2.5 新增: 短周期 RPS
+    hist_volumes: List[float] = None, # v2.4 新增: 历史成交量数据
+    tail_vol_ratio: float = 0         # v2.5 新增: 尾盘 15min 成交占比
 ) -> Optional[Dict]:
     """
     生成交易信号 (v2.4 增强版)
@@ -145,6 +147,17 @@ def generate_signal(
         volume_signal  # v2.4: 传入量价信号
     )
     
+    # v2.5.0: RPS 背离检测 (强势股退潮)
+    from src.indicators import detect_rps_divergence
+    div_info = detect_rps_divergence(rps, rps20)
+    if div_info['is_divergence']:
+        # 如果是严重的补跌风险，直接不产生信号
+        if div_info['signal'] == '🚫 强势股补跌风险':
+            return None
+        # 否则更新分类和建议
+        category = div_info['signal']
+        suggestion = "短周期转弱，注意高位退潮风险，逢高离场"
+    
     result = {
         '代码': code,
         '名称': name,
@@ -164,9 +177,10 @@ def generate_signal(
     }
     
     # v2.4: 添加量价信号信息
-    if volume_signal.get('pattern'):
-        result['量价形态'] = volume_signal.get('label', '')
-        result['量价评分'] = volume_signal.get('score', 50)
+    # v2.5.0: 尾盘吸筹检测
+    if tail_vol_ratio > 15:
+        result['量价形态'] = f"{result.get('量价形态', '')} ✨尾盘吸筹({tail_vol_ratio}%)".strip()
+        result['量价评分'] = result.get('量价评分', 50) + 15
     
     return result
 

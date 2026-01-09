@@ -21,15 +21,32 @@ sys.path.insert(0, PROJECT_ROOT)
 
 import akshare as ak
 from config import RESULTS_DIR, PORTFOLIO_CHECK
-from src.utils import logger, safe_read_json, safe_write_json
+from src.utils import logger
+from src.database import db
 
 # 持仓文件路径
 HOLDINGS_FILE = os.path.join(PROJECT_ROOT, "data", "holdings.json")
 
 
 def load_holdings() -> dict:
-    """加载持仓数据 (线程安全)"""
-    return safe_read_json(HOLDINGS_FILE, default={})
+    """从 SQLite 加载持仓数据 (v2.5.0)"""
+    return db.get_holdings()
+
+
+def save_holdings(holdings: dict):
+    """保存持仓数据到 SQLite (v2.5.0)"""
+    # 获取数据库中现有的代码
+    old_holdings = db.get_holdings()
+    old_codes = set(old_holdings.keys())
+    new_codes = set(holdings.keys())
+    
+    # 1. 移除已平仓的 (在旧的里但不在新的里)
+    for code in old_codes - new_codes:
+        db.remove_holding(code)
+    
+    # 2. 保存/更新现有的
+    for code, info in holdings.items():
+        db.save_holding(code, info)
 
 
 # 备份目录
@@ -146,8 +163,13 @@ def add_position(
         logger.info(f"   新成本: {new_price:.3f} | 数量: {total_qty}")
     else:
         # 新开仓
-        # v2.4.1: 计算 ATR 止损位
-        atr_stop = _calculate_atr_stop_for_stock(code, buy_price)
+        # v2.5.0: 增加等级映射 (策略 -> 等级)
+        # RPS_CORE=A, POTENTIAL=B, STABLE=C
+        grade_map = {"RPS_CORE": "A", "POTENTIAL": "B", "STABLE": "C"}
+        grade = grade_map.get(strategy, "B")
+        
+        # v2.5.0: 计算 ATR 止损位 (传入 grade 以实现差异化止损)
+        atr_stop = _calculate_atr_stop_for_stock(code, buy_price, grade)
         
         holdings[code] = {
             "name": name,
@@ -156,6 +178,7 @@ def add_position(
             "buy_date": datetime.date.today().strftime("%Y-%m-%d"),
             "quantity": quantity,
             "strategy": strategy,
+            "grade": grade,    # v2.5.0: 存储评级
             "note": note,
             "atr_stop": atr_stop  # v2.4.1: 动态 ATR 止损位
         }
@@ -165,17 +188,21 @@ def add_position(
             logger.info(f"   📊 ATR 动态止损位: {atr_stop:.2f}")
 
 
-def _calculate_atr_stop_for_stock(code: str, buy_price: float) -> float:
+def _calculate_atr_stop_for_stock(code: str, buy_price: float, grade: str = 'B') -> float:
     """
     为股票计算 ATR 止损位 (内部函数)
+    v2.5.0: 解耦至 src.indicators 并支持差异化评级
     
     Returns:
         ATR 止损价位，计算失败时返回 None
     """
     try:
         from src.data_loader import get_stock_history
-        from src.indicators import calculate_atr, calculate_atr_stop_loss
+        from src.indicators import calculate_atr, calculate_atr_stop_loss, get_grade_based_stop_params
         from config import STOP_LOSS_STRATEGY
+        
+        # 获取等级对应的参数
+        risk_params = get_grade_based_stop_params(grade)
         
         # 获取历史数据计算 ATR
         hist = get_stock_history(code, 30)
@@ -187,11 +214,11 @@ def _calculate_atr_stop_for_stock(code: str, buy_price: float) -> float:
                 period=STOP_LOSS_STRATEGY.get('atr_period', 14)
             )
             if atr > 0:
-                multiplier = STOP_LOSS_STRATEGY.get('atr_multiplier', 2.0)
+                multiplier = risk_params.get('atr_multiplier', 1.5)
                 return calculate_atr_stop_loss(buy_price, atr, multiplier)
         
-        # 计算失败时使用固定止损
-        fixed_pct = STOP_LOSS_STRATEGY.get('fixed_stop_pct', -3.0)
+        # 计算失败时使用固定止损 (同样参考风险等级，A级宽一些)
+        fixed_pct = -5.0 if grade == 'A' else -3.0
         return round(buy_price * (1 + fixed_pct / 100), 2)
         
     except Exception as e:
@@ -323,6 +350,22 @@ def close_position(code: str, sell_price: float = None, sell_quantity: int = 0, 
         action = f"💰 减仓 {actual_sell_qty} 股 (剩余 {holdings[code]['quantity']} 股)"
     
     save_holdings(holdings)
+    
+    # v2.5.0: 归档到数据库交易历史
+    db.add_trade_history({
+        "code": code,
+        "name": info['name'],
+        "buy_date": info['buy_date'],
+        "sell_date": datetime.date.today().strftime("%Y-%m-%d"),
+        "buy_price": info['buy_price'],
+        "sell_price": sell_price,
+        "quantity": actual_sell_qty,
+        "pnl_amount": pnl_amount,
+        "pnl_pct": pnl,
+        "strategy": info.get('strategy'),
+        "grade": info.get('grade'),
+        "note": '减仓' if not is_sell_all else '清仓'
+    })
     
     # 显示结果
     if pnl >= 0:
@@ -468,16 +511,20 @@ def daily_check():
                 })
         else:
             # 只有在没有触发止损的情况下，才检查其他状态
-            # 使用配置文件中的阈值
-            max_profit_threshold = PORTFOLIO_CHECK.get('max_profit_threshold', 10)
-            drawdown_threshold = PORTFOLIO_CHECK.get('drawdown_threshold', -3)
-            take_profit_alert = PORTFOLIO_CHECK.get('take_profit_alert', 10)
-            loss_attention = PORTFOLIO_CHECK.get('loss_attention_threshold', -5)
+            # v2.5.0: 根据评级动态获取阈值
+            from src.indicators import get_grade_based_stop_params
+            grade = info.get('grade', 'B')
+            risk_params = get_grade_based_stop_params(grade)
             
-            if max_pnl > max_profit_threshold and drawdown < drawdown_threshold:
-                # 回撤判定：只要历史最高浮盈过阈值，且回撤超阈值，强制预警
+            # 策略师建议：Grade A 容忍度更高，Grade C 更敏感
+            drawdown_threshold = risk_params['drawdown_threshold']
+            take_profit_alert = risk_params['take_profit']
+            loss_attention = -5.0
+            
+            if max_pnl > 10 and drawdown < drawdown_threshold:
+                # 收益回撤判定
                 status = "🚨"
-                action = f"📉 回撤止盈警报！(最高浮盈 {max_pnl:.1f}% 后回撤 {drawdown:.1f}%)"
+                action = f"📉 回撤止盈警报！({grade}级, 最高浮盈 {max_pnl:.1f}% 后回撤 {drawdown:.1f}%)"
                 alerts.append({
                     'code': code,
                     'name': name,

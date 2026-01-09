@@ -76,6 +76,10 @@ def get_stock_momentum_fast(code: str, name: str, window: int = 120) -> Optional
         # 保存最近4天收盘价，供实时计算MA5
         last_4_closes = df['收盘'].tail(4).tolist()
         
+        # v2.5.0: 判定是否创 20 日新高 (用于计算市场宽度)
+        high_20 = df['最高'].tail(20).max() if '最高' in df.columns else close_now
+        is_new_high_20 = close_now >= high_20
+        
         result = {
             '代码': code,
             '名称': name,
@@ -83,7 +87,8 @@ def get_stock_momentum_fast(code: str, name: str, window: int = 120) -> Optional
             'momentum_short': pct_change_short,    # v2.4.1: 短期动量 (RPS20)
             '最新价': close_now,
             'MA5': df['收盘'].tail(5).mean(),
-            'last_4_closes_sum': sum(last_4_closes)
+            'last_4_closes_sum': sum(last_4_closes),
+            'high_20_flag': is_new_high_20         # v2.5.0: 新高标志
         }
         
         # 保存到动量缓存
@@ -263,6 +268,10 @@ def run_updater():
         rps_df['RPS变动'] = 0
 
     rps_df = rps_df.sort_values(by='RPS', ascending=False)
+    
+    # v2.5.0: 重命名新高标志
+    if 'high_20_flag' in rps_df.columns:
+        rps_df = rps_df.rename(columns={'high_20_flag': '20日新高'})
 
     
     # 保存结果

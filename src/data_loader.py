@@ -27,6 +27,50 @@ from config.settings import STRATEGY, RPS_DATA_DIR, CONCURRENT, NETWORK, CACHE
 from src.cache_manager import cache_manager
 from src.utils import logger, ensure_history_excludes_today
 
+# ============================================
+# 数据源标准映射 (v2.5.0: 解决 Akshare 字段变动问题)
+# ============================================
+
+# 实时行情字段映射
+REALTIME_COL_MAP = {
+    '代码': 'code',
+    '名称': 'name',
+    '最新价': 'close',
+    '今开': 'open',
+    '最高': 'high',
+    '最低': 'low',
+    '成交量': 'volume',
+    '成交额': 'amount',
+    '涨跌幅': 'pct_change',
+    '换手率': 'turnover',
+    '量比': 'volume_ratio',
+    '市盈率-动态': 'pe',
+    '市净率': 'pb',
+    '总市值': 'market_cap',
+}
+
+# 历史行情字段映射
+HIST_COL_MAP = {
+    '日期': 'date',
+    '开盘': 'open',
+    '收盘': 'close',
+    '最高': 'high',
+    '最低': 'low',
+    '成交量': 'volume',
+    '成交额': 'amount',
+    '振幅': 'amplitude',
+    '涨跌幅': 'pct_change',
+    '换手率': 'turnover',
+}
+
+def standardize_df(df: pd.DataFrame, col_map: Dict[str, str]) -> pd.DataFrame:
+    """
+    统一 DataFrame 列名，增强系统抗波动能力
+    """
+    if df is None or df.empty:
+        return df
+    return df.rename(columns=col_map)
+
 
 # ============================================
 # 智能重试装饰器 (v2.4 tenacity 增强版)
@@ -82,18 +126,59 @@ def get_all_stocks() -> pd.DataFrame:
 
 
 def get_realtime_quotes() -> pd.DataFrame:
-    """获取实时行情数据"""
+    """获取实时行情数据并标准化 (v2.5.0)"""
     logger.info("📡 获取实时行情...")
     df = ak.stock_zh_a_spot_em()
     
-    # 计算振幅
-    df['振幅'] = (df['最高'] - df['最低']) / df['昨收'] 
+    # 标准化列名
+    df = standardize_df(df, REALTIME_COL_MAP)
     
-    # 判断阳线
-    df['是阳线'] = df['最新价'] > df['今开']
+    # 兼容性处理：如果标准化后还是中文列，手动补充计算
+    # 这里的逻辑假设 df 已经被 rename 过了
+    if 'high' in df.columns and 'low' in df.columns and 'close' in df.columns:
+        df['amplitude'] = (df['high'] - df['low']) / df['close'].shift(1).fillna(df['open'])
+        df['is_up'] = df['close'] > df['open']
     
     logger.info(f"   获取到 {len(df)} 只股票")
     return df
+
+
+@retry_on_failure(max_retries=NETWORK.get('max_retries', 3), delay=NETWORK.get('retry_delay', 0.5))
+def get_tail_volume_ratio(code: str) -> float:
+    """
+    计算尾盘 15 分钟成交量占比 (v2.5.0)
+    
+    逻辑：
+    1. 获取当日 1 分钟数据
+    2. 计算 14:45 - 15:00 的成交量总和
+    3. 计算全天成交量总和
+    4. 返回比例
+    """
+    try:
+        df = ak.stock_zh_a_hist_min_em(symbol=code, period='1', adjust='qfq')
+        if df is None or df.empty:
+            return 0.0
+        
+        # 确保时间是字符串并过滤当日数据
+        today_str = datetime.datetime.now().strftime('%Y-%m-%d')
+        # 如果是夜间测试或非交易日，取最后一天
+        last_date = df.iloc[-1]['时间'].split(' ')[0]
+        df_today = df[df['时间'].str.startswith(last_date)]
+        
+        if df_today.empty:
+            return 0.0
+            
+        total_volume = df_today['成交量'].sum()
+        # 取最后 15 根 K 线
+        tail_df = df_today.tail(15)
+        tail_volume = tail_df['成交量'].sum()
+        
+        if total_volume > 0:
+            return round(tail_volume / total_volume * 100, 2)
+        return 0.0
+    except Exception as e:
+        logger.debug(f"获取 {code} 尾盘数据失败: {e}")
+        return 0.0
 
 
 @retry_on_failure(max_retries=NETWORK.get('max_retries', 3), delay=NETWORK.get('retry_delay', 0.5))
@@ -103,10 +188,22 @@ def _fetch_stock_history_from_api(code: str, days: int = 150, adjust: str = "qfq
     
     v2.4 增强: 使用 tenacity 指数退避重试
     """
-    df = ak.stock_zh_a_hist(symbol=code, period="daily", adjust=adjust)
-    if df is None or len(df) < days:
+    try:
+        df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date="20200101", adjust=adjust)
+        if df is None or df.empty:
+            return None
+        
+        # 标准化列名 (v2.5.0)
+        df = standardize_df(df, HIST_COL_MAP)
+        
+        # 统一日期格式
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            
+        return df.tail(days + 10)
+    except Exception as e:
+        logger.error(f"获取 {code} 历史数据 API 失败: {e}")
         return None
-    return df.tail(days + 10)
 
 
 def get_stock_history(

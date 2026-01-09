@@ -33,6 +33,34 @@ def calculate_rps(momentum_series: pd.Series) -> pd.Series:
     return momentum_series.rank(pct=True) * 100
 
 
+def detect_rps_divergence(rps120: float, rps20: float) -> Dict:
+    """
+    检测 RPS 长短周期背离 (v2.5 新增)
+    
+    逻辑：如果长周期 (RPS120) 极强，但短周期 (RPS20) 跌破阈值，说明强势股陷入退潮/补跌。
+    
+    Returns:
+        {
+            'is_divergence': bool,
+            'signal': str,         # 'RETREAT' (退潮), 'NORMAL'
+            'score_adjustment': int
+        }
+    """
+    if rps120 > 90 and rps20 < 70:
+        return {
+            'is_divergence': True,
+            'signal': '⚠️ 高位退潮',
+            'score_adjustment': -20
+        }
+    elif rps120 > 85 and rps20 < 60:
+        return {
+            'is_divergence': True,
+            'signal': '🚫 强势股补跌风险',
+            'score_adjustment': -30
+        }
+    return {'is_divergence': False, 'signal': 'NORMAL', 'score_adjustment': 0}
+
+
 def calculate_realtime_ma5(current_price: float, last_4_closes: list) -> float:
     """
     计算实时 MA5
@@ -365,6 +393,21 @@ def calculate_atr_stop_loss(buy_price: float, atr: float, multiplier: float = 2.
         止损价位
     """
     return round(buy_price - atr * multiplier, 2)
+
+
+def get_grade_based_stop_params(grade: str = 'B') -> Dict:
+    """
+    根据股票评级获取差异化的止损/止盈参数 (v2.5 策略师建议)
+    
+    - Grade A (趋势核心): 容忍度高 (1.5倍-2倍 ATR)，博取主升浪。
+    - Grade C (稳健/杂毛): 容忍度低 (1.2倍 ATR)，移动止盈更敏感。
+    """
+    params = {
+        'A': {'atr_multiplier': 2.0, 'drawdown_threshold': -5.0, 'take_profit': 15.0},
+        'B': {'atr_multiplier': 1.5, 'drawdown_threshold': -3.0, 'take_profit': 10.0},
+        'C': {'atr_multiplier': 1.2, 'drawdown_threshold': -2.5, 'take_profit': 5.0},
+    }
+    return params.get(grade, params['B'])
 
 
 # ============================================

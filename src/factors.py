@@ -106,10 +106,63 @@ def get_market_condition() -> Dict:
             'above_ma20': above_ma20,
             'trend': trend,
             'suggestion': suggestion,
+            'market_breadth': calculate_market_breadth() # v2.5.0: 增加市场宽度
         }
     except Exception as e:
         logger.error(f"获取大盘状态失败: {e}")
         return {'safe': False, 'trend': f'错误: {e}', 'suggestion': '暂停交易'}
+
+
+def calculate_market_breadth() -> Dict:
+    """
+    计算市场宽度 (v2.5.0)
+    基于 RPS 动量数据中的 '20日新高' 标志
+    
+    Returns:
+        {
+            'all_count': int,       # 总样本数
+            'high_20_count': int,   # 创20日新高家数
+            'breadth_pct': float,   # 占比
+            'status': str           # 强弱描述
+        }
+    """
+    try:
+        import glob
+        from config.settings import RPS_DATA_DIR
+        
+        # 寻找最新的 RPS 文件
+        list_of_files = glob.glob(os.path.join(RPS_DATA_DIR, 'rps_rank_*.csv'))
+        if not list_of_files:
+            return {'all_count': 0, 'high_20_count': 0, 'breadth_pct': 0, 'status': '未知'}
+            
+        latest_file = max(list_of_files, key=os.path.getctime)
+        df = pd.read_csv(latest_file)
+        
+        if '20日新高' not in df.columns:
+            return {'all_count': len(df), 'high_20_count': 0, 'breadth_pct': 0, 'status': '数据不足'}
+            
+        high_20_count = df['20日新高'].astype(bool).sum()
+        total = len(df)
+        pct = round(high_20_count / total * 100, 2) if total > 0 else 0
+        
+        if pct > 15:
+            status = "极强"
+        elif pct > 8:
+            status = "良好"
+        elif pct > 4:
+            status = "一般"
+        else:
+            status = "较弱"
+            
+        return {
+            'all_count': total,
+            'high_20_count': int(high_20_count),
+            'breadth_pct': pct,
+            'status': status
+        }
+    except Exception as e:
+        logger.debug(f"计算市场宽度失败: {e}")
+        return {'all_count': 0, 'high_20_count': 0, 'breadth_pct': 0, 'status': f'错误: {e}'}
 
 
 def print_market_condition():
@@ -129,6 +182,11 @@ def print_market_condition():
         logger.info(f"   ✅ {cond['suggestion']}")
     else:
         logger.info(f"   ⚠️ {cond['suggestion']}")
+        
+    # v2.5.0: 打印市场宽度
+    breadth = cond.get('market_breadth', {})
+    if breadth and breadth['all_count'] > 0:
+        logger.info(f"   📊 市场宽度: {breadth['breadth_pct']}% ({breadth['high_20_count']}只创新高) | 状态: {breadth['status']}")
     
     logger.info("=" * 60)
     return cond

@@ -12,12 +12,29 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(_
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.utils import logger
+from src.database import db # v2.5.0
 
 # 数据文件路径
 HISTORY_FILE = os.path.join(PROJECT_ROOT, "data", "trade_history.csv")
 
 def load_trade_history():
-    """加载并清洗交易历史"""
+    """加载并清洗交易历史 (v2.5.0: 优先从 SQLite 加载)"""
+    # 1. 尝试从数据库加载
+    history = db.get_trade_history()
+    if history:
+        df = pd.DataFrame(history)
+        # 统一字段名映射 (DB 字段 -> 原 CSV 习惯)
+        col_map = {
+            'pnl_pct': '盈亏%',
+            'strategy': '策略',
+            'grade': '评级',
+            'sell_date': '卖出日期'
+        }
+        df = df.rename(columns=col_map)
+        df['卖出日期'] = pd.to_datetime(df['卖出日期'])
+        return df
+    
+    # 2. 降级从 CSV 加载
     if not os.path.exists(HISTORY_FILE):
         return None
     

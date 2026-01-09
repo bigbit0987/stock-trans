@@ -20,10 +20,11 @@ import threading
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 
-import akshare as ak
 import pandas as pd
 from config import REALTIME_MONITOR
-from src.utils import logger, safe_read_json, safe_write_json
+from src.utils import logger
+from src.database import db
+from src.indicators import get_grade_based_stop_params
 
 
 # 提醒记录文件 (用于冷却机制)
@@ -139,6 +140,10 @@ def analyze_position(
     # 计算涨跌幅
     pnl_pct = (current_price - buy_price) / buy_price * 100
     
+    # v2.5.0: 根据 Grade 获取差异化参数
+    grade = kwargs.get('grade', 'B')
+    risk_params = get_grade_based_stop_params(grade)
+    
     # 计算回撤
     drawdown = (current_price - highest_price) / highest_price * 100 if highest_price > 0 else 0
     
@@ -182,7 +187,8 @@ def analyze_position(
     # 3. 检查回撤 (只对有浮盈的股票)
     if highest_price > buy_price:
         max_pnl = (highest_price - buy_price) / buy_price * 100
-        drawdown_alert = REALTIME_MONITOR['drawdown_alert']
+        # v2.5.0: 使用差异化回撤阈值
+        drawdown_alert = risk_params.get('drawdown_threshold', -3.0)
         min_profit_for_drawdown = REALTIME_MONITOR.get('drawdown_monitor_min_profit', 3)
         
         if drawdown <= drawdown_alert and max_pnl > min_profit_for_drawdown:
@@ -232,16 +238,23 @@ def run_monitor_once() -> List[Dict]:
         
         current_price = prices[code]
         
-        # 更新最高价
-        highest = max(info.get('highest_price', info['buy_price']), current_price)
-        
+        # ---【v2.5.0: 更新最高价并持久化到数据库】---
+        old_highest = info.get('highest_price', info['buy_price'])
+        if current_price > old_highest:
+            info['highest_price'] = current_price
+            db.save_holding(code, info) # 立即同步数据库，防碰撞且保证连续性
+            highest = current_price
+        else:
+            highest = old_highest
+            
         alerts = analyze_position(
             code=code,
             name=info['name'],
             buy_price=info['buy_price'],
             current_price=current_price,
             highest_price=highest,
-            strategy=info.get('strategy', 'STABLE')
+            strategy=info.get('strategy', 'STABLE'),
+            grade=info.get('grade', 'B') # 传入评级
         )
         
         all_alerts.extend(alerts)

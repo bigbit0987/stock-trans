@@ -207,7 +207,8 @@ def cmd_add(args):
         name=args.name,
         buy_price=args.price,
         quantity=args.quantity or 0,
-        strategy=args.strategy or "STABLE"
+        strategy=args.strategy or "STABLE",
+        grade=args.grade # v2.5.0: 增加评级传递
     )
 
 
@@ -368,6 +369,7 @@ def main():
     add_parser.add_argument("price", type=float, help="买入价格")
     add_parser.add_argument("quantity", type=int, nargs="?", help="数量")
     add_parser.add_argument("--strategy", choices=["RPS_CORE", "POTENTIAL", "STABLE"], help="策略")
+    add_parser.add_argument("--grade", choices=["A", "B", "C"], help="评级 (A=最强, B=普通, C=稳健)") # v2.5.0
 
     close_parser = subparsers.add_parser("close", help="💰 卖出结账")
     close_parser.add_argument("code", help="股票代码")
