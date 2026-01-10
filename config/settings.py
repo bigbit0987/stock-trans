@@ -148,7 +148,7 @@ _validate_factor_weights()
 
 
 # ============================================
-# 大盘风控配置 (v2.3 增强)
+# 大盘风控配置 (v2.5.2 增强)
 # ============================================
 MARKET_RISK_CONTROL = {
     # 是否启用大盘风控
@@ -168,6 +168,24 @@ MARKET_RISK_CONTROL = {
         'enabled': True,               # 是否启用休眠模式
         'trigger': 'below_ma20',       # 触发条件: 'below_ma20' 或 'consecutive_down_3'
         'notify_on_sleep': True,       # 进入休眠时发送通知
+    },
+    
+    # v2.5.2 新增: 市场宽度自适应配置
+    # 根据市场宽度动态调整筛选标准
+    'market_breadth_adaptive': {
+        'enabled': True,
+        # 冰点期 (breadth < 8%): 只做最强核心标的
+        'cold_market': {
+            'threshold': 8,            # 市场宽度 < 8%
+            'rps_min_override': 70,    # RPS 最低要求提高到 70
+            'position_multiplier': 0.5, # 仓位减半
+        },
+        # 过热期 (breadth > 30%): 警惕情绪过热
+        'hot_market': {
+            'threshold': 30,           # 市场宽度 > 30%
+            'turnover_spike_check': True,  # 启用换手率突变检测
+            'turnover_spike_ratio': 3.0,   # 换手率突变倍数阈值 (相比5日均值)
+        },
     },
 }
 

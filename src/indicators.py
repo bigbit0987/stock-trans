@@ -136,17 +136,58 @@ def calculate_atr_stop_loss(buy_price: float, atr: float, multiplier: float = 2.
 
 def get_grade_based_stop_params(grade: str = 'B') -> Dict:
     """
-    根据股票评级获取差异化的止损/止盈参数 (v2.5 策略师建议)
+    根据股票评级获取差异化的止损/止盈参数 (v2.5.2 增强)
     
-    - Grade A (趋势核心): 容忍度高 (1.5倍-2倍 ATR)，博取主升浪。
-    - Grade C (稳健/杂毛): 容忍度低 (1.2倍 ATR)，移动止盈更敏感。
+    策略师建议:
+    - Grade A (趋势核心): 容忍度高，设置更宽松的 5% 回撤触发，博取大利润
+    - Grade B (常规): 中等容忍度，3% 回撤触发
+    - Grade C (稳健/杂毛): 容忍度低，设置严格的 2% 回撤触发，执行"有利润就走"的原则
+    
+    Returns:
+        {
+            'atr_multiplier': float,       # ATR止损倍数
+            'drawdown_threshold': float,   # 回撤止盈触发阈值 (%)
+            'take_profit': float,          # 主动止盈阈值 (%)
+            'trailing_start': float,       # 移动止盈激活点 (%)
+            'trailing_callback': float,    # 回撤触发比例 (%)
+            'hold_strategy': str,          # 持仓策略描述
+        }
     """
     params = {
-        'A': {'atr_multiplier': 2.0, 'drawdown_threshold': -5.0, 'take_profit': 15.0},
-        'B': {'atr_multiplier': 1.5, 'drawdown_threshold': -3.0, 'take_profit': 10.0},
-        'C': {'atr_multiplier': 1.2, 'drawdown_threshold': -2.5, 'take_profit': 5.0},
+        'A': {
+            'atr_multiplier': 2.0,         # 宽松止损
+            'drawdown_threshold': -5.0,    # 高容忍度
+            'take_profit': 15.0,           # 目标收益高
+            'trailing_start': 5.0,         # 盈利 5% 后激活
+            'trailing_callback': 5.0,      # 从高点回撤 5% 止盈
+            'hold_strategy': '核心持仓，博取主升浪',
+        },
+        'B': {
+            'atr_multiplier': 1.5,
+            'drawdown_threshold': -3.0,
+            'take_profit': 10.0,
+            'trailing_start': 3.0,
+            'trailing_callback': 3.0,
+            'hold_strategy': '常规持仓，控制回撤',
+        },
+        'C': {
+            'atr_multiplier': 1.2,         # 紧密止损
+            'drawdown_threshold': -2.0,    # 低容忍度
+            'take_profit': 5.0,            # 目标收益保守
+            'trailing_start': 2.0,         # 盈利 2% 后激活
+            'trailing_callback': 2.0,      # 从高点回撤 2% 止盈
+            'hold_strategy': '快进快出，有利就走',
+        },
+        'D': {
+            'atr_multiplier': 1.0,         # 最紧止损
+            'drawdown_threshold': -1.5,
+            'take_profit': 3.0,
+            'trailing_start': 1.5,
+            'trailing_callback': 1.5,
+            'hold_strategy': '高风险标的，严格风控',
+        },
     }
-    return params.get(grade, params['B'])
+    return params.get(grade.upper(), params['B'])
 
 
 

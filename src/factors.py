@@ -547,6 +547,159 @@ def get_shareholder_change_score(code: str) -> Dict:
         logger.debug(f"获取 {code} 股东人数失败: {e}")
         return {'change_pct': 0, 'score': 50, 'label': '查询失败'}
 
+
+# ============================================
+# 6. RPS 动量斜率因子 (v2.5.2 新增)
+# ============================================
+
+def calculate_rps_slope(rps_history: List[float], window: int = 5) -> Dict:
+    """
+    计算 RPS 动量斜率 (v2.5.2 策略师建议)
+    
+    逻辑：
+    - 即便 RPS 为 90，如果斜率为负，说明动能正在衰减
+    - 最优质的标的是 "RPS > 90 且斜率为正" 的股票，代表处于加速主升段
+    
+    Args:
+        rps_history: 过去 N 天的 RPS 值列表 (最新的在最后)
+        window: 计算斜率的窗口期 (默认 5 天)
+    
+    Returns:
+        {
+            'slope': float,           # 斜率值 (正=动能增强, 负=动能衰减)
+            'is_accelerating': bool,  # 是否处于加速期
+            'signal': str,            # 'ACCELERATE' (加速), 'DECELERATE' (减速), 'STABLE' (稳定)
+            'score_adjustment': int,  # 评分调整值
+            'label': str,             # 描述标签
+        }
+    """
+    if not rps_history or len(rps_history) < 2:
+        return {
+            'slope': 0,
+            'is_accelerating': False,
+            'signal': 'UNKNOWN',
+            'score_adjustment': 0,
+            'label': '数据不足'
+        }
+    
+    # 取最近 window 天的数据
+    recent = rps_history[-window:] if len(rps_history) >= window else rps_history
+    
+    # 计算简单线性回归斜率
+    # slope = (sum(xi * yi) - n * mean(x) * mean(y)) / (sum(xi^2) - n * mean(x)^2)
+    n = len(recent)
+    x = list(range(n))  # 0, 1, 2, ...
+    y = recent
+    
+    mean_x = sum(x) / n
+    mean_y = sum(y) / n
+    
+    numerator = sum((x[i] - mean_x) * (y[i] - mean_y) for i in range(n))
+    denominator = sum((x[i] - mean_x) ** 2 for i in range(n))
+    
+    if denominator == 0:
+        slope = 0
+    else:
+        slope = numerator / denominator
+    
+    # 判断信号
+    current_rps = recent[-1] if recent else 0
+    
+    if slope > 2:
+        # 斜率显著为正：动能强劲增强
+        signal = 'ACCELERATE'
+        is_accelerating = True
+        if current_rps >= 90:
+            score_adjustment = 10  # RPS高+加速 = 核心标的
+            label = f"🚀加速主升段(斜率+{slope:.1f})"
+        elif current_rps >= 70:
+            score_adjustment = 8
+            label = f"📈动能增强(斜率+{slope:.1f})"
+        else:
+            score_adjustment = 5
+            label = f"📈动能抬头(斜率+{slope:.1f})"
+    elif slope > 0.5:
+        # 斜率小幅为正：动能稳中向上
+        signal = 'STABLE'
+        is_accelerating = False
+        score_adjustment = 3
+        label = f"↗动能稳健(斜率+{slope:.1f})"
+    elif slope < -2:
+        # 斜率显著为负：动能快速衰减
+        signal = 'DECELERATE'
+        is_accelerating = False
+        if current_rps >= 80:
+            score_adjustment = -8  # 高RPS但衰减 = 警惕
+            label = f"⚠️强势股退潮(斜率{slope:.1f})"
+        else:
+            score_adjustment = -5
+            label = f"📉动能衰减(斜率{slope:.1f})"
+    elif slope < -0.5:
+        # 斜率小幅为负：动能趋弱
+        signal = 'DECELERATE'
+        is_accelerating = False
+        score_adjustment = -3
+        label = f"↘动能趋弱(斜率{slope:.1f})"
+    else:
+        # 斜率接近 0：动能持平
+        signal = 'STABLE'
+        is_accelerating = False
+        score_adjustment = 0
+        label = "→动能持平"
+    
+    return {
+        'slope': round(slope, 2),
+        'is_accelerating': is_accelerating,
+        'signal': signal,
+        'score_adjustment': score_adjustment,
+        'label': label
+    }
+
+
+def get_rps_history_for_code(code: str, days: int = 5) -> List[float]:
+    """
+    获取指定股票过去 N 天的 RPS 历史值
+    
+    注意：这需要 RPS 历史数据。当前实现使用最新 RPS 文件，
+    如需完整斜率计算，需要保存历史 RPS 数据。
+    
+    临时方案：使用 RPS 和 RPS 变动值估算
+    """
+    import glob
+    from config.settings import RPS_DATA_DIR
+    
+    try:
+        # 寻找最新的 RPS 文件
+        list_of_files = sorted(glob.glob(os.path.join(RPS_DATA_DIR, 'rps_rank_*.csv')))
+        if not list_of_files:
+            return []
+        
+        # 尝试读取最近 N 天的文件
+        rps_values = []
+        for file in list_of_files[-days:]:
+            try:
+                df = pd.read_csv(file)
+                # 兼容中英文列名
+                code_col = 'code' if 'code' in df.columns else '代码'
+                rps_col = 'rps' if 'rps' in df.columns else 'RPS'
+                
+                df[code_col] = df[code_col].astype(str).str.zfill(6)
+                row = df[df[code_col] == str(code).zfill(6)]
+                
+                if not row.empty:
+                    rps_val = row.iloc[0].get(rps_col, 0)
+                    if pd.notna(rps_val):
+                        rps_values.append(float(rps_val))
+            except Exception:
+                continue
+        
+        return rps_values
+    except Exception as e:
+        logger.debug(f"获取 {code} RPS 历史失败: {e}")
+        return []
+
+
+
 def calculate_multi_factor_score(
     code: str,
     name: str,

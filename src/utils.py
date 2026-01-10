@@ -31,9 +31,13 @@ def clean_old_logs():
         pass
 
 
-def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
+def setup_logger(name: str, level=logging.INFO, async_file: bool = False) -> logging.Logger:
     """
     配置并返回一个 Logger
+    
+    v2.5.2 新增:
+    - async_file: 是否使用异步文件写入 (QueueHandler)
+      开发环境下日志量较大时，可启用以避免日志写入阻塞主交易逻辑
     """
     # 自动清理旧日志
     clean_old_logs()
@@ -51,21 +55,53 @@ def setup_logger(name: str, level=logging.INFO) -> logging.Logger:
     
     # 输出到文件 (带日期)
     filename = os.path.join(LOGS_DIR, f"{datetime.now().strftime('%Y-%m-%d')}.log")
-    file_handler = logging.FileHandler(filename, encoding='utf-8')
-    file_handler.setLevel(level)
     file_formatter = logging.Formatter(
         '%(asctime)s | %(name)s | %(levelname)s | %(message)s',
         datefmt='%H:%M:%S'
     )
-    file_handler.setFormatter(file_formatter)
+    
+    if async_file:
+        # v2.5.2: 使用 QueueHandler 实现异步日志写入
+        try:
+            import queue
+            from logging.handlers import QueueHandler, QueueListener
+            
+            log_queue = queue.Queue(-1)  # 无限容量队列
+            
+            # 实际写入文件的 handler
+            file_handler = logging.FileHandler(filename, encoding='utf-8')
+            file_handler.setLevel(level)
+            file_handler.setFormatter(file_formatter)
+            
+            # 队列监听器在后台线程处理日志
+            queue_listener = QueueListener(log_queue, file_handler, respect_handler_level=True)
+            queue_listener.start()
+            
+            # 主线程通过 QueueHandler 发送日志
+            queue_handler = QueueHandler(log_queue)
+            queue_handler.setLevel(level)
+            logger.addHandler(queue_handler)
+            
+            # 保存引用以便后续清理
+            logger._queue_listener = queue_listener
+        except Exception as e:
+            # 降级到同步模式
+            file_handler = logging.FileHandler(filename, encoding='utf-8')
+            file_handler.setLevel(level)
+            file_handler.setFormatter(file_formatter)
+            logger.addHandler(file_handler)
+    else:
+        # 同步模式 (默认)
+        file_handler = logging.FileHandler(filename, encoding='utf-8')
+        file_handler.setLevel(level)
+        file_handler.setFormatter(file_formatter)
+        logger.addHandler(file_handler)
     
     # 输出到控制台 (保持清爽，只显示消息)
     console_handler = logging.StreamHandler()
     console_handler.setLevel(level)
     console_formatter = logging.Formatter('%(message)s')
     console_handler.setFormatter(console_formatter)
-    
-    logger.addHandler(file_handler)
     logger.addHandler(console_handler)
     
     return logger

@@ -1,13 +1,18 @@
 #!/usr/bin/env python
 """
-SQLite 存储引擎 (v2.5.0)
+SQLite 存储引擎 (v2.5.2)
 解决并发读写竞争风险，提供事务支持
+新增: Schema 版本控制，自动迁移
 """
 import sqlite3
 import os
 import datetime
 from typing import Dict, List, Optional, Any
 from src.utils import logger
+
+# v2.5.2: Schema 版本控制
+# 每次修改表结构时，递增此版本号并在 _migrate_schema 中添加迁移逻辑
+SCHEMA_VERSION = 2
 
 class Database:
     _instance = None
@@ -72,6 +77,14 @@ class Database:
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # v2.5.2: Schema 版本表
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS schema_version (
+                        version INTEGER PRIMARY KEY
+                    )
+                ''')
+                
                 # 持仓表 (实盘/手动)
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS holdings (
@@ -166,8 +179,63 @@ class Database:
                     )
                 ''')
                 conn.commit()
+                
+                # v2.5.2: 检查并执行 Schema 迁移
+                self._check_and_migrate_schema(conn)
+                
         except Exception as e:
             logger.error(f"❌ 数据库初始化失败: {e}")
+
+    def _check_and_migrate_schema(self, conn):
+        """检查 Schema 版本并执行必要的迁移 (v2.5.2 新增)"""
+        try:
+            cursor = conn.cursor()
+            
+            # 获取当前数据库版本
+            cursor.execute('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+            row = cursor.fetchone()
+            current_version = row[0] if row else 0
+            
+            if current_version < SCHEMA_VERSION:
+                logger.info(f"🔄 检测到 Schema 版本需要更新: {current_version} → {SCHEMA_VERSION}")
+                self._migrate_schema(conn, current_version, SCHEMA_VERSION)
+                
+                # 更新版本号
+                cursor.execute('INSERT OR REPLACE INTO schema_version (version) VALUES (?)', (SCHEMA_VERSION,))
+                conn.commit()
+                logger.info(f"✅ Schema 迁移完成，当前版本: {SCHEMA_VERSION}")
+            else:
+                logger.debug(f"Schema 版本最新: {SCHEMA_VERSION}")
+                
+        except Exception as e:
+            logger.warning(f"Schema 版本检查失败 (可忽略): {e}")
+    
+    def _migrate_schema(self, conn, from_version: int, to_version: int):
+        """执行增量 Schema 迁移 (v2.5.2 新增)
+        
+        每次修改表结构时，在此添加迁移逻辑。
+        迁移写法示例:
+        - if from_version < 2: cursor.execute("ALTER TABLE xxx ADD COLUMN yyy TEXT")
+        """
+        cursor = conn.cursor()
+        
+        # 版本 1 -> 2: 示例迁移 (添加 virtual_holdings.grade 列)
+        if from_version < 2:
+            try:
+                # 检查 grade 列是否存在
+                cursor.execute("PRAGMA table_info(virtual_holdings)")
+                columns = [col[1] for col in cursor.fetchall()]
+                if 'grade' not in columns:
+                    cursor.execute("ALTER TABLE virtual_holdings ADD COLUMN grade TEXT DEFAULT 'B'")
+                    logger.info("   迁移: 为 virtual_holdings 添加 grade 列")
+            except Exception as e:
+                logger.debug(f"迁移 v2 失败 (可忽略): {e}")
+        
+        # 未来版本的迁移在此添加:
+        # if from_version < 3:
+        #     cursor.execute("ALTER TABLE ...")
+        
+        conn.commit()
 
     def get_alert_history(self) -> Dict[str, str]:
         """获取所有提醒历史记录"""

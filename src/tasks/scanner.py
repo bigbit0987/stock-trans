@@ -115,6 +115,8 @@ def run_scan():
     # 大盘风控检查 (增强版)
     # =========================================
     position_multiplier = 1.0  # v2.5.1: 仓位乘数，用于市场宽度渐进式风控
+    rps_min_dynamic = STRATEGY.get('rps_min', 40)  # v2.5.2: 动态 RPS 阈值
+    check_turnover_spike = False  # v2.5.2: 过热期换手率突变检测标记
     
     try:
         from config import MARKET_RISK_CONTROL
@@ -124,11 +126,14 @@ def run_scan():
             market_cond = print_market_condition()
             
             # =========================================
-            # v2.5.1: Market Breadth 渐进式风控
-            # 根据市场宽度动态调整操作策略
+            # v2.5.2: Market Breadth 渐进式风控（增强版）
+            # 根据市场宽度动态调整操作策略和筛选标准
             # =========================================
             breadth = market_cond.get('market_breadth', {})
             breadth_pct = breadth.get('breadth_pct', 10)  # 默认 10%
+            
+            # 获取自适应配置
+            adaptive_config = MARKET_RISK_CONTROL.get('market_breadth_adaptive', {})
             
             if breadth_pct < 4:
                 # 极弱市场：休眠模式
@@ -141,11 +146,21 @@ def run_scan():
                           "分析: 杀强势股行情，即使指数护盘，个股也会普跌。\n"
                           "建议: 空仓观望，等待市场情绪回暖。")
                 return []
-            elif breadth_pct < 8:
-                # 弱市场：单笔金额减半
-                position_multiplier = 0.5
-                logger.warning(f"\n⚠️ 市场宽度偏弱: {breadth_pct}% 创新高")
-                logger.warning("   渐进式风控: 单笔金额自动减半")
+            elif breadth_pct < adaptive_config.get('cold_market', {}).get('threshold', 8):
+                # v2.5.2: 冰点期 - 只做最强核心标的
+                cold_config = adaptive_config.get('cold_market', {})
+                position_multiplier = cold_config.get('position_multiplier', 0.5)
+                rps_min_dynamic = cold_config.get('rps_min_override', 70)
+                
+                logger.warning(f"\n⚠️ 市场宽度偏弱: {breadth_pct}% 创新高 (冰点期)")
+                logger.warning(f"   渐进式风控: 单笔金额 ×{position_multiplier}, RPS 阈值提高至 {rps_min_dynamic}")
+            elif breadth_pct > adaptive_config.get('hot_market', {}).get('threshold', 30):
+                # v2.5.2: 过热期 - 启用换手率突变检测
+                hot_config = adaptive_config.get('hot_market', {})
+                if hot_config.get('turnover_spike_check', True):
+                    check_turnover_spike = True
+                    logger.warning(f"\n🔥 市场过热预警: {breadth_pct}% 创新高")
+                    logger.warning(f"   启用换手率突变检测，过滤情绪过热个股")
             else:
                 logger.info(f"\n✅ 市场宽度良好: {breadth_pct}% 创新高 ({breadth.get('status', '')})")
             
@@ -301,6 +316,21 @@ def run_scan():
                             # v2.5.0: 获取 RPS20 (短周期动量)
                             rps20_val = row_data.get('rps20', 0)
                             rps20_score = rps20_val if pd.notna(rps20_val) else 0
+                    
+                    # v2.5.2: 动态 RPS 阈值过滤
+                    if rps_score < rps_min_dynamic:
+                        continue  # 冰点期只保留高 RPS 标的
+                    
+                    # v2.5.2: 过热期换手率突变检测
+                    if check_turnover_spike and 'volume' in hist.columns:
+                        avg_volume_5d = hist['volume'].tail(5).mean()
+                        current_volume = data.get('volume', 0) if 'volume' in data else 0
+                        if current_volume > 0 and avg_volume_5d > 0:
+                            spike_ratio = MARKET_RISK_CONTROL.get('market_breadth_adaptive', {}).get(
+                                'hot_market', {}).get('turnover_spike_ratio', 3.0)
+                            if current_volume / avg_volume_5d > spike_ratio:
+                                logger.debug(f"   {code} 换手率突变 ({current_volume/avg_volume_5d:.1f}倍)，过热期过滤")
+                                continue
                     
                     # 提取前一天数据 (hist 的最后一行通常是前一个交易日)
                     prev_day = hist.iloc[-1]
@@ -477,29 +507,46 @@ def run_scan():
                     tail_change = tail_data['price_change']
                     
                     if tail_ratio > 15:
-                        if tail_change > 0:
+                        if tail_change > 0.5:
+                            # v2.5.2: 强力吸筹 (放量 + 上涨 > 0.5%)
+                            results_df.loc[idx_val, 'remark'] = f"✨尾盘强吸筹({tail_ratio:.0f}%, {tail_change:+.1f}%)"
+                            results_df.loc[idx_val, 'total_score'] += min(tail_ratio / 2, 15)  # 加分上限提高
+                        elif tail_change > 0:
                             # 意图识别：量增价稳/升 -> 积极吸筹
                             results_df.loc[idx_val, 'remark'] = f"✨尾盘吸筹({tail_ratio:.0f}%, {tail_change:+.1f}%)"
                             results_df.loc[idx_val, 'total_score'] += min(tail_ratio / 2, 10)
-                        elif tail_change < -1.0:
-                            # 严重砸盘：标记为待剔除
+                        elif tail_change < -0.5:
+                            # v2.5.2: 放量下跌直接剔除 (原 -1.0% 改为 -0.5%)
+                            # 策略师建议：次日低开概率极高，即使 Grade A 也不应参与
                             results_df.loc[idx_val, 'remark'] = f"🚫尾盘砸盘({tail_ratio:.0f}%, {tail_change:.1f}%)"
                             results_df.loc[idx_val, '_exclude'] = True  # 标记待剔除
                             logger.warning(f"   ⚠️ {code} 尾盘放量砸盘 ({tail_change:.1f}%)，已剔除")
-                        elif tail_change < -0.5:
-                            # 轻微砸盘：减分但保留
-                            results_df.loc[idx_val, 'remark'] = f"⚠️尾盘异动({tail_ratio:.0f}%, {tail_change:.1f}%)"
-                            results_df.loc[idx_val, 'total_score'] -= 5
                         else:
-                            results_df.loc[idx_val, 'remark'] = f"📊尾盘异动({tail_ratio:.0f}%)"
+                            # 微跌但放量，给予警告
+                            results_df.loc[idx_val, 'remark'] = f"⚠️尾盘异动({tail_ratio:.0f}%, {tail_change:.1f}%)"
+                            results_df.loc[idx_val, 'total_score'] -= 3
 
                     # 2. 验证筹码因子
-                    from src.factors import get_shareholder_change_score
+                    from src.factors import get_shareholder_change_score, calculate_rps_slope, get_rps_history_for_code
                     chip_info = get_shareholder_change_score(code)
                     if chip_info['score'] > 60:
                         existing = results_df.loc[idx_val, 'remark'] if 'remark' in results_df.columns and pd.notna(results_df.loc[idx_val, 'remark']) else ""
                         results_df.loc[idx_val, 'remark'] = f"{existing} {chip_info['label']}".strip()
                         results_df.loc[idx_val, 'total_score'] += 5
+                    
+                    # 3. v2.5.2: RPS 动量斜率验证
+                    rps_history = get_rps_history_for_code(code, days=5)
+                    if rps_history:
+                        slope_info = calculate_rps_slope(rps_history)
+                        adjustment = slope_info['score_adjustment']
+                        if adjustment != 0:
+                            results_df.loc[idx_val, 'total_score'] += adjustment
+                            existing = results_df.loc[idx_val, 'remark'] if 'remark' in results_df.columns and pd.notna(results_df.loc[idx_val, 'remark']) else ""
+                            results_df.loc[idx_val, 'remark'] = f"{existing} {slope_info['label']}".strip()
+                            if adjustment > 0:
+                                logger.debug(f"   {code} {slope_info['label']}, 评分 +{adjustment}")
+                            else:
+                                logger.debug(f"   {code} {slope_info['label']}, 评分 {adjustment}")
                 except Exception as e:
                     logger.debug(f"二次验证失败 {code}: {e}")
             
