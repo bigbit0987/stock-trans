@@ -943,10 +943,10 @@ def batch_calculate_scores(stocks: List[Dict]) -> List[Dict]:
         try:
             val_data = valuation_map.get(code)
             if val_data:
-                # 提取数据 (v2.5.1: 采用标准化英文键)
-                pe = val_data.get('pe', 0) or 0
-                pb = val_data.get('pb', 0) or 0
-                market_cap = (val_data.get('market_cap', 0) or 0) / 100000000  # 转为亿
+                # 提取数据 (v2.5.3: 使用中文键名，与 akshare 返回一致)
+                pe = val_data.get('市盈率-动态', 0) or 0
+                pb = val_data.get('市净率', 0) or 0
+                market_cap = (val_data.get('总市值', 0) or 0) / 100000000  # 转为亿
                 
                 # PE评分 (低PE加分)
                 if 0 < pe < 15: valuation_score += 20
@@ -1054,9 +1054,9 @@ if __name__ == "__main__":
     # 测试
     print_market_condition()
     
-    print("\n热门板块:")
+    logger.info("\n热门板块:")
     for s in get_hot_sectors(5):
-        print(f"  {s['rank']}. {s['name']} {s['change']:+.2f}%")
+        logger.info(f"  {s['rank']}. {s['name']} {s['change']:+.2f}%")
 
 
 # ============================================

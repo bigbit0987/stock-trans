@@ -117,6 +117,7 @@ def run_scan():
     position_multiplier = 1.0  # v2.5.1: 仓位乘数，用于市场宽度渐进式风控
     rps_min_dynamic = STRATEGY.get('rps_min', 40)  # v2.5.2: 动态 RPS 阈值
     check_turnover_spike = False  # v2.5.2: 过热期换手率突变检测标记
+    breadth_pct = 10  # v2.5.2: 市场宽度百分比，默认 10%（稍后可能被覆盖）
     
     try:
         from config import MARKET_RISK_CONTROL

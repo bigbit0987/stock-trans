@@ -43,13 +43,6 @@ def load_virtual_trades() -> List[Dict]:
     return db.get_virtual_trade_history()
 
 
-def save_virtual_trades(trades: List[Dict]):
-    """保存虚拟交易记录 (v2.5.1: 迁移至 SQLite)"""
-    # 这里的参数 trades 通常是新增的单笔交易
-    if isinstance(trades, list) and len(trades) > 0:
-        # 如果是列表，通常最后那个是新的
-        # 但为了稳妥，我们在 record 处直接调用数据库
-        pass
 
 def add_virtual_trade(trade: Dict):
     """新增单笔虚拟交易历史"""

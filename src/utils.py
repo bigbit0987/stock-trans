@@ -166,12 +166,11 @@ def ensure_history_excludes_today(hist: pd.DataFrame, date_col: str = 'date') ->
             # 如果最后一行是今天，则移除
             if date_strs.iloc[-1] == today_str:
                 hist = hist.iloc[:-1]
-                logger.debug(f"历史数据已移除今日({today_str})记录")
+                # 注: 此处不使用 logger，避免循环依赖
         
         return hist
-    except Exception as e:
-        logger.warning(f"日期校验失败: {e}")
-        return hist
+    except Exception:
+        return hist  # 日期校验失败时返回原数据
 
 
 
