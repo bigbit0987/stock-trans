@@ -93,7 +93,11 @@ def print_summary(df):
     for _, row in recent.iterrows():
         pnl = row['盈亏%']
         icon = "🟢" if pnl > 0 else "🔴" if pnl < 0 else "⚪"
-        logger.info(f"   {icon} {row['代码']} {row['名称']}: {pnl:+.2f}% ({row['策略']})")
+        # v2.5.2: 兼容中英文字段名
+        code = row.get('代码', row.get('code', ''))
+        name = row.get('名称', row.get('name', ''))
+        strategy = row.get('策略', row.get('strategy', ''))
+        logger.info(f"   {icon} {code} {name}: {pnl:+.2f}% ({strategy})")
     
     logger.info("\n" + "=" * 70)
 
@@ -155,8 +159,20 @@ try:
             st.dataframe(data.sort_values('卖出日期', ascending=False), use_container_width=True)
 
         # 仅当确定在 streamlit 的运行上下文时执行渲染
-        # 注意：streamlit run 时入口脚本会执行两遍，需要小心处理
-        if st._is_running_with_streamlit:
+        # v2.5.2: 兼容新版 streamlit，使用更稳健的检测方式
+        def is_running_in_streamlit():
+            try:
+                # 新版 streamlit 检测方式
+                from streamlit.runtime.scriptrunner import get_script_run_ctx
+                return get_script_run_ctx() is not None
+            except ImportError:
+                # 旧版 streamlit 降级检测
+                try:
+                    return st._is_running_with_streamlit
+                except AttributeError:
+                    return False
+        
+        if is_running_in_streamlit():
             render_web_ui()
 
 except ImportError:

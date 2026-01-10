@@ -89,7 +89,8 @@ def add_position(
     buy_price: float, 
     quantity: int = 0,
     strategy: str = "STABLE",
-    note: str = ""
+    note: str = "",
+    grade: str = None  # v2.5.2: 允许直接指定评级
 ):
     """
     添加持仓 (支持加仓合并) v2.4.1 增强版
@@ -145,13 +146,17 @@ def add_position(
         logger.info(f"   新成本: {new_price:.3f} | 数量: {total_qty}")
     else:
         # 新开仓
-        # v2.5.0: 增加等级映射 (策略 -> 等级)
-        # RPS_CORE=A, POTENTIAL=B, STABLE=C
-        grade_map = {"RPS_CORE": "A", "POTENTIAL": "B", "STABLE": "C"}
-        grade = grade_map.get(strategy, "B")
+        # v2.5.2: 如果用户直接指定了 grade，使用用户指定的；否则根据 strategy 映射
+        if grade is None:
+            # v2.5.0: 增加等级映射 (策略 -> 等级)
+            # RPS_CORE=A, POTENTIAL=B, STABLE=C
+            grade_map = {"RPS_CORE": "A", "POTENTIAL": "B", "STABLE": "C"}
+            final_grade = grade_map.get(strategy, "B")
+        else:
+            final_grade = grade.upper()
         
         # v2.5.0: 计算 ATR 止损位 (传入 grade 以实现差异化止损)
-        atr_stop = _calculate_atr_stop_for_stock(code, buy_price, grade)
+        atr_stop = _calculate_atr_stop_for_stock(code, buy_price, final_grade)
         
         holdings[code] = {
             "name": name,
@@ -160,7 +165,7 @@ def add_position(
             "buy_date": datetime.date.today().strftime("%Y-%m-%d"),
             "quantity": quantity,
             "strategy": strategy,
-            "grade": grade,    # v2.5.0: 存储评级
+            "grade": final_grade,    # v2.5.2: 存储评级
             "note": note,
             "atr_stop": atr_stop  # v2.4.1: 动态 ATR 止损位
         }
