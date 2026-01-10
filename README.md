@@ -1,8 +1,11 @@
-# 📈 AlphaHunter - 尾盘低吸选股系统
+# 📈 AlphaHunter - 尾盘低吸量化选股系统
 
-> 基于十年实战经验的量化选股工具，结合"尾盘低吸"策略 + RPS 强度评分
+> 🎯 **v2.5.2** - 基于十年实战经验的量化选股工具，结合"尾盘低吸"策略 + RPS 动量评分 + 多因子增强
 
----
+[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+**核心特性**: 🔍 尾盘选股 | 📊 RPS 动量排名 | 🛡️ 大盘风控 | 💰 ATR 动态止损 | 🧪 虚拟持仓验证 | 📱 钉钉推送
 
 ## 📁 项目结构
 
@@ -49,6 +52,32 @@ stock_trans/
 │
 ├── 📁 logs/                # 📋 系统日志 (按天记录)
 └── 📁 .agent/              # 🤖 工作流定义
+```
+
+---
+
+## ⏱️ 每日工作流一览
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                        📅 交易日工作流程                              │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│   🌅 09:15  python main.py premarket --push    # 竞价高开预警        │
+│                                                                      │
+│   📡 09:30  python main.py monitor             # 盘中实时监控        │
+│      ↓                                                               │
+│   14:35    python main.py update               # 更新 RPS 数据       │
+│      ↓                                                               │
+│   🔍 14:40  python main.py scan                # 尾盘选股扫描        │
+│      ↓                                                               │
+│   📋 15:05  python main.py check --push        # 持仓巡检+推送       │
+│      ↓                                                               │
+│   🧪 15:10  python main.py virtual             # 虚拟持仓追踪        │
+│                                                                      │
+│   💡 或者一键执行: ./run_daily.sh                                    │
+│                                                                      │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -138,16 +167,18 @@ python main.py cache status      # 📦 查看缓存状态
 python main.py cache clean       # 🧹 清理过期缓存
 ```
 
-| 命令                       | 说明             | 建议时间            |
-| -------------------------- | ---------------- | ------------------- |
-| `main.py update`           | 更新 RPS 数据    | 每天 17:00 (收盘后) |
-| `main.py premarket --push` | 集合竞价预警     | 9:20 - 9:25         |
-| `main.py monitor`          | **盘中实时监控** | 9:30 - 15:00        |
-| `main.py check --push`     | 持仓巡检         | 早盘/盘中           |
-| `main.py scan`             | 尾盘选股         | 14:35 - 14:50       |
-| `main.py import`           | 导入持仓         | 尾盘后              |
-| `main.py performance`      | **推荐效果统计** | 收盘后              |
-| `main.py cache status`     | 查看缓存         | 随时                |
+### 📅 命令执行时间表
+
+| 时间        | 命令                       | 说明             |
+| ----------- | -------------------------- | ---------------- |
+| 09:15-09:25 | `main.py premarket --push` | 🌅 集合竞价预警  |
+| 09:30-15:00 | `main.py monitor`          | 📡 盘中实时监控  |
+| 14:30-14:35 | `main.py update`           | 📊 更新 RPS 数据 |
+| 14:35-14:50 | `main.py scan`             | 🔍 尾盘选股      |
+| 15:00-15:10 | `main.py check --push`     | 📋 持仓巡检      |
+| 15:10+      | `main.py virtual`          | 🧪 虚拟持仓追踪  |
+| 随时        | `main.py market --sectors` | 🔥 查看热门板块  |
+| 随时        | `main.py cache status`     | 📦 缓存状态      |
 
 ---
 
@@ -157,48 +188,50 @@ python main.py cache clean       # 🧹 清理过期缓存
 
 ```bash
 # 从选股结果导入（推荐）
-python position.py --import-csv
+python main.py import
 
-# 手动添加
-python position.py --add 600000,浦发银行,10.5
+# 手动添加 (代码 名称 价格 数量)
+python main.py add 600000 浦发银行 10.5 1000
+
+# 指定评级 (A=核心, B=潜力, C=稳健)
+python main.py add 600000 浦发银行 10.5 1000 --grade A
 ```
 
-### 每日巡检（检查止损位）
+### 每日巡检
 
 ```bash
-python position.py --check
+python main.py check           # 持仓巡检
+python main.py check --push    # 巡检并推送至钉钉
 ```
 
-会检查每只持仓是否跌破 MA5，对于 `RPS_CORE` 策略的股票给出止损警告。
+检查内容：
 
-### 平仓（支持减仓）
+- ✅ MA5 是否跌破
+- ✅ ATR 动态止损位
+- ✅ 回撤保护触发
+- ✅ Grade C 时间止损 (持仓 2 天未盈利 3%)
+
+### 卖出平仓
 
 ```bash
-# 使用当前价全部平仓
-python position.py --close 600000
+# 获取当前价全部平仓
+python main.py close 600000
 
 # 指定卖出价全部平仓
-python position.py --close 600000,11.5
+python main.py close 600000 11.5
 
-# 减仓500股（潜力股次日冲高卖一半）
-python position.py --close 600000,11.5,500
+# 减仓500股
+python main.py close 600000 11.5 500
+
+# 强制卖出 (跳过T+1限制)
+python main.py close 600000 11.5 --force
 ```
-
-平仓后会自动归档到 `data/trade_history.csv`。
-
-### 查看交易历史
-
-```bash
-python position.py --history
-```
-
-显示所有已平仓的交易记录和胜率统计。
 
 ### 其他命令
 
 ```bash
-python position.py --list    # 列出所有持仓
-python position.py --remove 600000  # 移除持仓（不归档）
+python main.py list      # 列出当前持仓
+python main.py history   # 查看交易历史和胜率统计
 ```
 
 ---
@@ -304,20 +337,43 @@ source .venv/bin/activate && ./run_daily.sh
 - **形态**: 连涨两天小阳 + 紧贴 5 日线
 - **风控**: 次日冲高即走，风险可控
 
-### RPS 增强
+### RPS 动量增强
 
 - 只买市场最强的品种 (RPS > 40)
 - 趋势核心股可适当延长持仓
 - 自动排除弱势补涨股
+- **v2.5.2**: RPS 斜率因子识别加速主升段
 
 ---
 
 ## ⚠️ 风控原则
 
+### 基本原则
+
 1. **不买弱势股**: RPS < 40 坚决不碰
 2. **不追高**: 只做"蓄势"形态，不追涨停
 3. **严格止损**: 跌破 5 日线必走
 4. **熊市减仓**: 大盘持续下跌时降低仓位
+
+### 市场宽度自适应 (v2.5.2)
+
+系统根据市场宽度 (创 20 日新高家数占比) 自动调整策略：
+
+| 市场状态 | 宽度范围 | 系统行为                    |
+| -------- | -------- | --------------------------- |
+| 🔴 极弱  | < 4%     | **休眠模式**，停止选股      |
+| 🟡 冰点  | 4-8%     | RPS 阈值提高至 70，仓位减半 |
+| 🟢 正常  | 8-30%    | 正常交易                    |
+| 🔥 过热  | > 30%    | 启用换手率突变检测          |
+
+### 评级差异化止盈止损 (v2.5.2)
+
+| 评级  | 类型     | ATR 倍数 | 回撤触发 | 持仓策略             |
+| ----- | -------- | -------- | -------- | -------------------- |
+| **A** | 趋势核心 | 2.0      | -5%      | 核心持仓，博取主升浪 |
+| **B** | 潜力标的 | 1.5      | -3%      | 常规持仓，控制回撤   |
+| **C** | 稳健标的 | 1.2      | -2%      | 快进快出，有利就走   |
+| **D** | 高风险   | 1.0      | -1.5%    | 严格风控             |
 
 ---
 
@@ -429,7 +485,57 @@ source .venv/bin/activate && ./run_daily.sh
 
 ---
 
+## ❓ 常见问题
+
+### Q: 选股结果为空？
+
+**A:** 检查以下几点：
+
+1. 今天是否为交易日（周末/节假日无数据）
+2. 市场宽度是否触发休眠模式 (< 4%)
+3. RPS 数据是否已更新 (`main.py update`)
+
+### Q: 钉钉推送收不到？
+
+**A:** 检查 `.env` 文件:
+
+```bash
+DINGTALK_WEBHOOK=https://oapi.dingtalk.com/robot/send?access_token=...
+DINGTALK_SECRET=SEC...
+```
+
+确保两个值都正确填写，且机器人已添加关键词或 IP 白名单。
+
+### Q: RPS 更新很慢？
+
+**A:** 首次运行需要获取全市场历史数据，约需 5-10 分钟。后续运行使用缓存，通常 10 秒内完成。
+
+### Q: 如何修改选股条件？
+
+**A:** 编辑 `config/settings.py` 中的 `STRATEGY` 配置：
+
+```python
+STRATEGY = {
+    'pct_change_min': 0.3,      # 最小涨幅
+    'pct_change_max': 4.0,      # 最大涨幅
+    'turnover_min': 5.0,        # 最小换手率
+    'rps_min': 40,              # 最低 RPS
+}
+```
+
+---
+
 ## ⚠️ 免责声明
 
-本工具仅供学习研究，不构成投资建议。
-股市有风险，投资需谨慎。
+本工具仅供学习研究，不构成任何投资建议。
+
+- 📊 所有分析结果仅供参考
+- 💰 投资决策需自行判断
+- ⚠️ 股市有风险，入市需谨慎
+- 🔒 请勿在生产环境使用真实资金进行自动交易
+
+---
+
+## 📜 开源协议
+
+MIT License © 2024-2026
